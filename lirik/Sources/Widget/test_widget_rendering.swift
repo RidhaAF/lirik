@@ -4,13 +4,6 @@
 //  lirik
 //
 //  Verification script for Phase 4: Touch Bar Widget UI Rendering States & Controls.
-//  Simulates all UI states:
-//  - State 1: No Track Playing
-//  - State 2: Loading Lyrics
-//  - State 3: No Synced Lyrics Found (HTTP 404)
-//  - State 4: Static Lyrics Only (Not Synced)
-//  - State 5: Synced Karaoke Mode (Intro -> Synced Lines -> Outro)
-//  - State 6: Force Refresh Action Bypassing Cache
 //
 
 import Foundation
@@ -94,7 +87,7 @@ for (time, label) in testTimes {
     let snap = LRCSyncEngine.resolve(elapsedTime: time, lines: testLines)
     let cur = snap.currentLine?.text ?? (snap.positionState == .beforeFirstLine ? "♪ Intro" : "(none)")
     let nxt = snap.upcomingLine?.text ?? (snap.positionState == .afterLastLine ? "♪ Outro" : "(none)")
-    print(String(format: "   ⏱ t=%4.1fs [%@-20s] Primary: \"%-30s\" | Secondary: \"%@\"", time, label, cur, nxt))
+    print("   ⏱ t=\(String(format: "%4.1f", time))s [\(label)] Primary: \"\(cur)\" | Secondary: \"\(nxt)\"")
 }
 
 print("\n6. [Action: Refresh Button Tapped]")
