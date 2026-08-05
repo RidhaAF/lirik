@@ -392,7 +392,11 @@ class LyricsWidget: NSObject, PKWidget {
     }
 
     private func formatLineText(_ text: String) -> String {
-        guard text.count > 42 else { return text }
+        let defaults = UserDefaults.standard
+        let enableMarquee = defaults.object(forKey: LirikPreferenceViewController.keyEnableMarquee) as? Bool ?? true
+
+        guard enableMarquee, text.count > 42 else { return text }
+
         let timeOffset = Int(Date().timeIntervalSince1970 * 2) % (text.count + 6)
         let extended = text + "  •  " + text
         let start = extended.index(extended.startIndex, offsetBy: min(timeOffset, extended.count - 1))

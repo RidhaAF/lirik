@@ -35,6 +35,7 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
     static let keyShowPauseIcon = "io.github.ridhaaf.lirik.showPauseIcon"
     static let keyHighlightColor = "io.github.ridhaaf.lirik.highlightColor"
     static let keyAlignment = "io.github.ridhaaf.lirik.alignment"
+    static let keyEnableMarquee = "io.github.ridhaaf.lirik.enableMarquee"
 
     // MARK: - UI Controls
 
@@ -44,6 +45,7 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
     private let alignmentControl = NSSegmentedControl(labels: ["Left Aligned", "Center Aligned"], trackingMode: .selectOne, target: nil, action: nil)
     private let playerPopUp = NSPopUpButton()
     private let pauseIconCheckbox = NSButton(checkboxWithTitle: "Show ⏸ icon when track is paused", target: nil, action: nil)
+    private let marqueeCheckbox = NSButton(checkboxWithTitle: "Enable marquee scrolling for long lyric lines", target: nil, action: nil)
     private let clearCacheButton = NSButton(title: "Clear Cached Lyrics", target: nil, action: nil)
     private let cacheStatusLabel = NSTextField(labelWithString: "")
 
@@ -118,8 +120,9 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
         playerStackView.addArrangedSubview(playerPopUp)
         mainStackView.addArrangedSubview(playerStackView)
 
-        // 6. Pause Indicator Checkbox
+        // 6. Checkboxes (Pause Indicator & Marquee Scrolling)
         mainStackView.addArrangedSubview(pauseIconCheckbox)
+        mainStackView.addArrangedSubview(marqueeCheckbox)
 
         // 7. Clear Cache Button
         let cacheStackView = NSStackView()
@@ -154,7 +157,10 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
         pauseIconCheckbox.target = self
         pauseIconCheckbox.action = #selector(onPauseCheckboxChanged)
 
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 380, height: 420))
+        marqueeCheckbox.target = self
+        marqueeCheckbox.action = #selector(onMarqueeCheckboxChanged)
+
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 380, height: 450))
         mainStackView.frame = container.bounds
         mainStackView.autoresizingMask = [.width, .height]
         container.addSubview(mainStackView)
@@ -203,6 +209,9 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
 
         let showPause = defaults.object(forKey: Self.keyShowPauseIcon) as? Bool ?? true
         pauseIconCheckbox.state = showPause ? .on : .off
+
+        let marquee = defaults.object(forKey: Self.keyEnableMarquee) as? Bool ?? true
+        marqueeCheckbox.state = marquee ? .on : .off
     }
 
     @objc private func onDualLineChanged() {
@@ -251,6 +260,11 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
         UserDefaults.standard.set(showPause, forKey: Self.keyShowPauseIcon)
     }
 
+    @objc private func onMarqueeCheckboxChanged() {
+        let marquee = marqueeCheckbox.state == .on
+        UserDefaults.standard.set(marquee, forKey: Self.keyEnableMarquee)
+    }
+
     @objc private func onClearCacheTapped() {
         lyricsCache.clear()
         cacheStatusLabel.stringValue = "✓ Cache Cleared"
@@ -264,6 +278,7 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
         UserDefaults.standard.set(11, forKey: Self.keyFontSize)
         UserDefaults.standard.set("auto", forKey: Self.keyPreferredPlayer)
         UserDefaults.standard.set(true, forKey: Self.keyShowPauseIcon)
+        UserDefaults.standard.set(true, forKey: Self.keyEnableMarquee)
         UserDefaults.standard.set("white", forKey: Self.keyHighlightColor)
         UserDefaults.standard.set("left", forKey: Self.keyAlignment)
         loadSavedPreferences()
