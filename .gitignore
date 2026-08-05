@@ -20,6 +20,7 @@ Pods/
 .LSOverride
 
 # Build artifacts
+dist/releases/
 *.o
 *.d
 *.swp
