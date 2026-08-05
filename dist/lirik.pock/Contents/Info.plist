@@ -52,5 +52,7 @@
 	<string>Ridha Ahmad Firdaus</string>
 	<key>PKWidgetPreferenceClass</key>
 	<string>lirik.LirikPreferenceViewController</string>
+	<key>PKWidgetVersion</key>
+	<string>1.2</string>
 </dict>
 </plist>
