@@ -42,7 +42,6 @@ class LyricsWidget: NSObject, PKWidget {
     private let stylusProgressView = StylusProgressView()
 
     private let refreshButton = PKButton(title: "↺", target: nil, action: nil)
-    private let closeButton = PKButton(title: "✕", target: nil, action: nil)
 
     // MARK: - Logic Dependencies
 
@@ -92,8 +91,7 @@ class LyricsWidget: NSObject, PKWidget {
     // MARK: - UI Setup
 
     private func setupUI() {
-        // Container stack view (horizontal: content + minimal glyph controls)
-        // Zero top/bottom edgeInsets so PKButtons and text fill 30px without vertical clipping
+        // Container stack view (horizontal: content + refresh button)
         containerView.orientation = .horizontal
         containerView.alignment = .centerY
         containerView.distribution = .fill
@@ -112,13 +110,13 @@ class LyricsWidget: NSObject, PKWidget {
         textStackView.distribution = .fillProportionally
         textStackView.spacing = 0
 
-        // Current line label (bold 11pt for Touch Bar 30px height)
+        // Current line label (bold 11pt for Touch Bar karaoke primary line)
         currentLineLabel.font = NSFont.boldSystemFont(ofSize: 11)
         currentLineLabel.textColor = .labelColor
         currentLineLabel.lineBreakMode = .byTruncatingTail
         currentLineLabel.stringValue = "Lirik"
 
-        // Next line label (dimmed 9pt for Touch Bar 30px height)
+        // Next line label (dimmed 9pt for Touch Bar karaoke secondary line)
         nextLineLabel.font = NSFont.systemFont(ofSize: 9)
         nextLineLabel.textColor = .secondaryLabelColor
         nextLineLabel.lineBreakMode = .byTruncatingTail
@@ -144,20 +142,8 @@ class LyricsWidget: NSObject, PKWidget {
         refreshButton.action = #selector(handleRefresh)
         refreshButton.widthAnchor.constraint(equalToConstant: 24).isActive = true
 
-        // Configure Close Button (vector SF Symbol for zero character baseline clipping)
-        if let closeImg = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close") {
-            closeButton.image = closeImg
-            closeButton.title = ""
-        } else {
-            closeButton.title = "✕"
-        }
-        closeButton.target = self
-        closeButton.action = #selector(handleClose)
-        closeButton.widthAnchor.constraint(equalToConstant: 24).isActive = true
-
         containerView.addArrangedSubview(contentStackView)
         containerView.addArrangedSubview(refreshButton)
-        containerView.addArrangedSubview(closeButton)
 
         self.view = containerView
     }
@@ -324,28 +310,31 @@ class LyricsWidget: NSObject, PKWidget {
             nextLineLabel.stringValue = "Allow Pock -> \(appName) in System Settings"
             stylusProgressView.progress = 0.0
 
-        case .loading(let title, let artist):
-            currentLineLabel.stringValue = "\(title) — \(artist)"
+        case .loading:
+            currentLineLabel.stringValue = "Fetching lyrics..."
             currentLineLabel.textColor = .labelColor
-            nextLineLabel.stringValue = "Fetching lyrics..."
+            nextLineLabel.stringValue = ""
 
-        case .noLyricsFound(let title, let artist):
-            currentLineLabel.stringValue = "\(title) — \(artist)"
-            currentLineLabel.textColor = .labelColor
-            nextLineLabel.stringValue = "No synced lyrics available"
+        case .noLyricsFound:
+            currentLineLabel.stringValue = "No synced lyrics available"
+            currentLineLabel.textColor = .secondaryLabelColor
+            nextLineLabel.stringValue = ""
 
-        case .staticOnly(let title, let artist, _):
-            currentLineLabel.stringValue = "\(title) — \(artist)"
-            currentLineLabel.textColor = .labelColor
-            nextLineLabel.stringValue = "Static lyrics (not time-synced)"
+        case .staticOnly(_, _, let text):
+            currentLineLabel.stringValue = "Static lyrics"
+            currentLineLabel.textColor = .secondaryLabelColor
+            let firstLine = text.components(separatedBy: .newlines).first(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }) ?? text
+            nextLineLabel.stringValue = firstLine
 
-        case .synced(let title, let artist, let lines):
+        case .synced(_, _, let lines):
             if lines.isEmpty {
-                currentLineLabel.stringValue = "\(title) — \(artist)"
-                nextLineLabel.stringValue = "No lyrics text"
+                currentLineLabel.stringValue = "No lyrics text"
+                currentLineLabel.textColor = .secondaryLabelColor
+                nextLineLabel.stringValue = ""
             } else {
-                currentLineLabel.stringValue = "\(title) — \(artist)"
-                nextLineLabel.stringValue = "Lyrics synced (\(lines.count) lines)"
+                let elapsed = nowPlayingWatcher.currentTrack?.elapsedTime ?? 0
+                let snapshot = LRCSyncEngine.resolve(elapsedTime: elapsed, lines: lines)
+                renderSyncSnapshot(snapshot, isPaused: isCurrentlyPaused)
             }
         }
     }
@@ -386,10 +375,5 @@ class LyricsWidget: NSObject, PKWidget {
         guard let track = nowPlayingWatcher.currentTrack else { return }
         let key = LyricsCache.makeTrackKey(title: track.title, artist: track.artist, duration: track.duration)
         loadLyrics(for: track, expectedKey: key, forceRefresh: true)
-    }
-
-    @objc private func handleClose() {
-        NSLog("[LyricsWidget] Close tapped — hiding widget view from Touch Bar")
-        view.isHidden = true
     }
 }
