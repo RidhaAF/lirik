@@ -220,26 +220,42 @@ final class AppleScriptBackend {
 
     // MARK: - Script execution
 
-    /// Executes an AppleScript string and returns the result as a
-    /// trimmed string, or nil on error.
+    /// Executes an AppleScript string via /usr/bin/osascript process
+    /// and returns the result as a trimmed string, or nil on error.
     private func runAppleScript(_ source: String, appName: String) -> String? {
-        let appleScript = NSAppleScript(source: source)
-        var errorInfo: NSDictionary?
-        let result = appleScript?.executeAndReturnError(&errorInfo)
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        task.arguments = ["-e", source]
 
-        if let error = errorInfo {
-            let errorNumber = error[NSAppleScript.errorNumber] as? Int ?? 0
-            if errorNumber == -1743 {
-                NSLog("[AppleScriptBackend] ⚠️ AUTOMATION PERMISSION DENIED (-1743) for \(appName). Grant Pock permission in System Settings -> Privacy & Security -> Automation.")
-                DispatchQueue.main.async { [weak self] in
-                    self?.onPermissionDenied?(appName)
+        let pipe = Pipe()
+        let errorPipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = errorPipe
+
+        do {
+            try task.run()
+            task.waitUntilExit()
+
+            if task.terminationStatus == 0 {
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let output = output, !output.isEmpty {
+                    return output
                 }
-            } else if errorNumber != -128 && errorNumber != -1728 {
-                NSLog("[AppleScriptBackend] Script error \(errorNumber): \(error[NSAppleScript.errorMessage] as? String ?? "unknown")")
+            } else {
+                let errData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+                let errStr = String(data: errData, encoding: .utf8) ?? ""
+                if errStr.contains("1743") || errStr.contains("Not authorized") {
+                    NSLog("[AppleScriptBackend] ⚠️ AUTOMATION PERMISSION DENIED (-1743) for \(appName).")
+                    DispatchQueue.main.async { [weak self] in
+                        self?.onPermissionDenied?(appName)
+                    }
+                }
             }
             return nil
+        } catch {
+            NSLog("[AppleScriptBackend] Process execution error: \(error.localizedDescription)")
+            return nil
         }
-
-        return result?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
