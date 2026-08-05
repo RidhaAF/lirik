@@ -10,7 +10,7 @@ import Foundation
 import AppKit
 import PockKit
 
-@objc (LirikPreferenceViewController)
+@objc(LirikPreferenceViewController)
 final class LirikPreferenceViewController: NSViewController, PKWidgetPreference {
 
     static var nibName: NSNib.Name = NSNib.Name("LirikPreferenceViewController")
@@ -34,21 +34,27 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
     static let keyPreferredPlayer = "io.github.ridhaaf.lirik.preferredPlayer"
     static let keyShowPauseIcon = "io.github.ridhaaf.lirik.showPauseIcon"
     static let keyHighlightColor = "io.github.ridhaaf.lirik.highlightColor"
+    static let keyAlignment = "io.github.ridhaaf.lirik.alignment"
 
     // MARK: - UI Controls
 
     private let dualLineControl = NSSegmentedControl(labels: ["2-Line Karaoke", "1-Line Compact"], trackingMode: .selectOne, target: nil, action: nil)
     private let fontSizeControl = NSSegmentedControl(labels: ["Small (10pt)", "Medium (11pt)", "Large (12pt)"], trackingMode: .selectOne, target: nil, action: nil)
     private let colorControl = NSSegmentedControl(labels: ["White", "Gold", "Cyan", "Green"], trackingMode: .selectOne, target: nil, action: nil)
+    private let alignmentControl = NSSegmentedControl(labels: ["Left Aligned", "Center Aligned"], trackingMode: .selectOne, target: nil, action: nil)
     private let playerPopUp = NSPopUpButton()
     private let pauseIconCheckbox = NSButton(checkboxWithTitle: "Show ⏸ icon when track is paused", target: nil, action: nil)
+    private let clearCacheButton = NSButton(title: "Clear Cached Lyrics", target: nil, action: nil)
+    private let cacheStatusLabel = NSTextField(labelWithString: "")
+
+    private let lyricsCache = LyricsCache()
 
     override func loadView() {
         let mainStackView = NSStackView()
         mainStackView.orientation = .vertical
         mainStackView.alignment = .leading
-        mainStackView.spacing = 16
-        mainStackView.edgeInsets = NSEdgeInsets(top: 20, left: 24, bottom: 20, right: 24)
+        mainStackView.spacing = 14
+        mainStackView.edgeInsets = NSEdgeInsets(top: 16, left: 24, bottom: 16, right: 24)
 
         // Title Header
         let titleLabel = NSTextField(labelWithString: "Lirik Preferences")
@@ -66,7 +72,18 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
         modeStackView.addArrangedSubview(dualLineControl)
         mainStackView.addArrangedSubview(modeStackView)
 
-        // 2. Font Size
+        // 2. Alignment
+        let alignStackView = NSStackView()
+        alignStackView.orientation = .vertical
+        alignStackView.alignment = .leading
+        alignStackView.spacing = 4
+        let alignTitle = NSTextField(labelWithString: "Text Alignment:")
+        alignTitle.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        alignStackView.addArrangedSubview(alignTitle)
+        alignStackView.addArrangedSubview(alignmentControl)
+        mainStackView.addArrangedSubview(alignStackView)
+
+        // 3. Font Size
         let fontStackView = NSStackView()
         fontStackView.orientation = .vertical
         fontStackView.alignment = .leading
@@ -77,7 +94,7 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
         fontStackView.addArrangedSubview(fontSizeControl)
         mainStackView.addArrangedSubview(fontStackView)
 
-        // 3. Highlight Color
+        // 4. Highlight Color
         let colorStackView = NSStackView()
         colorStackView.orientation = .vertical
         colorStackView.alignment = .leading
@@ -88,7 +105,7 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
         colorStackView.addArrangedSubview(colorControl)
         mainStackView.addArrangedSubview(colorStackView)
 
-        // 4. Preferred Player
+        // 5. Preferred Player
         let playerStackView = NSStackView()
         playerStackView.orientation = .vertical
         playerStackView.alignment = .leading
@@ -101,12 +118,29 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
         playerStackView.addArrangedSubview(playerPopUp)
         mainStackView.addArrangedSubview(playerStackView)
 
-        // 5. Pause Indicator Checkbox
+        // 6. Pause Indicator Checkbox
         mainStackView.addArrangedSubview(pauseIconCheckbox)
+
+        // 7. Clear Cache Button
+        let cacheStackView = NSStackView()
+        cacheStackView.orientation = .horizontal
+        cacheStackView.alignment = .centerY
+        cacheStackView.spacing = 8
+        clearCacheButton.bezelStyle = .rounded
+        clearCacheButton.target = self
+        clearCacheButton.action = #selector(onClearCacheTapped)
+        cacheStatusLabel.font = NSFont.systemFont(ofSize: 11)
+        cacheStatusLabel.textColor = .secondaryLabelColor
+        cacheStackView.addArrangedSubview(clearCacheButton)
+        cacheStackView.addArrangedSubview(cacheStatusLabel)
+        mainStackView.addArrangedSubview(cacheStackView)
 
         // Target actions
         dualLineControl.target = self
         dualLineControl.action = #selector(onDualLineChanged)
+
+        alignmentControl.target = self
+        alignmentControl.action = #selector(onAlignmentChanged)
 
         fontSizeControl.target = self
         fontSizeControl.action = #selector(onFontSizeChanged)
@@ -120,7 +154,7 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
         pauseIconCheckbox.target = self
         pauseIconCheckbox.action = #selector(onPauseCheckboxChanged)
 
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 360, height: 320))
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 380, height: 420))
         mainStackView.frame = container.bounds
         mainStackView.autoresizingMask = [.width, .height]
         container.addSubview(mainStackView)
@@ -137,6 +171,9 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
         let defaults = UserDefaults.standard
         let dualLine = defaults.object(forKey: Self.keyDualLine) as? Bool ?? true
         dualLineControl.selectedSegment = dualLine ? 0 : 1
+
+        let align = defaults.string(forKey: Self.keyAlignment) ?? "left"
+        alignmentControl.selectedSegment = align == "center" ? 1 : 0
 
         let fontSize = defaults.object(forKey: Self.keyFontSize) as? Int ?? 11
         if fontSize <= 10 {
@@ -171,6 +208,11 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
     @objc private func onDualLineChanged() {
         let dualLine = dualLineControl.selectedSegment == 0
         UserDefaults.standard.set(dualLine, forKey: Self.keyDualLine)
+    }
+
+    @objc private func onAlignmentChanged() {
+        let align = alignmentControl.selectedSegment == 1 ? "center" : "left"
+        UserDefaults.standard.set(align, forKey: Self.keyAlignment)
     }
 
     @objc private func onFontSizeChanged() {
@@ -209,11 +251,21 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
         UserDefaults.standard.set(showPause, forKey: Self.keyShowPauseIcon)
     }
 
+    @objc private func onClearCacheTapped() {
+        lyricsCache.clear()
+        cacheStatusLabel.stringValue = "✓ Cache Cleared"
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+            self?.cacheStatusLabel.stringValue = ""
+        }
+    }
+
     func reset() {
         UserDefaults.standard.set(true, forKey: Self.keyDualLine)
         UserDefaults.standard.set(11, forKey: Self.keyFontSize)
         UserDefaults.standard.set("auto", forKey: Self.keyPreferredPlayer)
         UserDefaults.standard.set(true, forKey: Self.keyShowPauseIcon)
+        UserDefaults.standard.set("white", forKey: Self.keyHighlightColor)
+        UserDefaults.standard.set("left", forKey: Self.keyAlignment)
         loadSavedPreferences()
     }
 }

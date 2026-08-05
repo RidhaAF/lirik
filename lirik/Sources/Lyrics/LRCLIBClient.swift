@@ -64,15 +64,51 @@ final class LRCLIBClient: Sendable {
         self.session = session
     }
 
+    /// Sanitizes track titles by stripping common noise like "(Remastered 2021)", "- Live", "[feat. ...]"
+    static func cleanTrackTitle(_ title: String) -> String {
+        var cleaned = title
+        let patterns = [
+            "\\s*\\(.*remaster.*\\)",
+            "\\s*\\[.*remaster.*\\]",
+            "\\s*\\(.*deluxe.*\\)",
+            "\\s*\\[.*deluxe.*\\]",
+            "\\s*\\(.*edition.*\\)",
+            "\\s*\\(.*live.*\\)",
+            "\\s*-\\s*live.*",
+            "\\s*-\\s*remastered.*",
+            "\\s*\\(feat\\..*\\)",
+            "\\s*\\[feat\\..*\\]",
+            "\\s*ft\\..*"
+        ]
+
+        for pattern in patterns {
+            if let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) {
+                let range = NSRange(location: 0, length: cleaned.utf16.count)
+                cleaned = regex.stringByReplacingMatches(in: cleaned, options: [], range: range, withTemplate: "")
+            }
+        }
+        return cleaned.trimmingCharacters(in: .whitespaces)
+    }
+
     /// Fetches lyrics from LRCLIB given track metadata.
-    ///
-    /// - Parameters:
-    ///   - title: Track title
-    ///   - artist: Artist name
-    ///   - album: Album name (optional, improves match precision)
-    ///   - duration: Track duration in seconds (optional)
-    /// - Returns: `LRCLIBResult` representing synced, plain-only, or notFound states.
     func fetchLyrics(
+        title: String,
+        artist: String,
+        album: String? = nil,
+        duration: TimeInterval? = nil
+    ) async throws -> LRCLIBResult {
+        let result = try await queryAPI(title: title, artist: artist, album: album, duration: duration)
+        if case .notFound = result {
+            let cleaned = Self.cleanTrackTitle(title)
+            if !cleaned.isEmpty && cleaned != title {
+                NSLog("[LRCLIBClient] Retrying lookup with sanitized title: '\(cleaned)'")
+                return try await queryAPI(title: cleaned, artist: artist, album: nil, duration: duration)
+            }
+        }
+        return result
+    }
+
+    private func queryAPI(
         title: String,
         artist: String,
         album: String? = nil,
@@ -92,7 +128,6 @@ final class LRCLIBClient: Sendable {
         }
 
         if let duration = duration, duration > 0 {
-            // Convert to integer seconds as recommended by LRCLIB API docs
             queryItems.append(URLQueryItem(name: "duration", value: String(Int(duration.rounded()))))
         }
 
@@ -129,12 +164,10 @@ final class LRCLIBClient: Sendable {
             } else if let plain = dto.plainLyrics, !plain.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 return .plainOnly(id: dto.id, plainText: plain)
             } else {
-                // Return notFound if response contains neither synced nor plain lyrics
                 return .notFound
             }
 
         case 404:
-            // Explicit result type for no match found per requirement
             return .notFound
 
         case 429:

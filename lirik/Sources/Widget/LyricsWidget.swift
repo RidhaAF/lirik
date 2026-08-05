@@ -381,12 +381,32 @@ class LyricsWidget: NSObject, PKWidget {
         }
     }
 
+    private func applyTextAlignment() {
+        let defaults = UserDefaults.standard
+        let alignKey = defaults.string(forKey: LirikPreferenceViewController.keyAlignment) ?? "left"
+        let isCenter = alignKey == "center"
+
+        textStackView.alignment = isCenter ? .centerX : .leading
+        currentLineLabel.alignment = isCenter ? .center : .left
+        nextLineLabel.alignment = isCenter ? .center : .left
+    }
+
+    private func formatLineText(_ text: String) -> String {
+        guard text.count > 42 else { return text }
+        let timeOffset = Int(Date().timeIntervalSince1970 * 2) % (text.count + 6)
+        let extended = text + "  •  " + text
+        let start = extended.index(extended.startIndex, offsetBy: min(timeOffset, extended.count - 1))
+        let end = extended.index(start, offsetBy: min(38, extended.distance(from: start, to: extended.endIndex)))
+        return String(extended[start..<end])
+    }
+
     private func renderStaticLyrics(_ text: String, elapsed: TimeInterval, trackDuration: TimeInterval?, isPaused: Bool) {
         let defaults = UserDefaults.standard
         let dualLine = defaults.object(forKey: LirikPreferenceViewController.keyDualLine) as? Bool ?? true
         let fontSize = defaults.object(forKey: LirikPreferenceViewController.keyFontSize) as? Int ?? 11
         let showPauseIcon = defaults.object(forKey: LirikPreferenceViewController.keyShowPauseIcon) as? Bool ?? true
 
+        applyTextAlignment()
         currentLineLabel.font = NSFont.boldSystemFont(ofSize: CGFloat(fontSize))
         nextLineLabel.font = NSFont.systemFont(ofSize: CGFloat(max(8, fontSize - 2)))
         nextLineLabel.isHidden = !dualLine
@@ -409,7 +429,7 @@ class LyricsWidget: NSObject, PKWidget {
 
         let prefix = (isPaused && showPauseIcon) ? "⏸ " : ""
         currentLineLabel.textColor = resolveHighlightColor(isPaused: isPaused)
-        currentLineLabel.stringValue = "\(prefix)\(lines[currentIndex])"
+        currentLineLabel.stringValue = "\(prefix)\(formatLineText(lines[currentIndex]))"
         nextLineLabel.stringValue = nextIndex != nil ? lines[nextIndex!] : ""
     }
 
@@ -419,11 +439,9 @@ class LyricsWidget: NSObject, PKWidget {
         let fontSize = defaults.object(forKey: LirikPreferenceViewController.keyFontSize) as? Int ?? 11
         let showPauseIcon = defaults.object(forKey: LirikPreferenceViewController.keyShowPauseIcon) as? Bool ?? true
 
-        // Apply dynamic font sizes
+        applyTextAlignment()
         currentLineLabel.font = NSFont.boldSystemFont(ofSize: CGFloat(fontSize))
         nextLineLabel.font = NSFont.systemFont(ofSize: CGFloat(max(8, fontSize - 2)))
-
-        // Toggle 2-line vs 1-line mode
         nextLineLabel.isHidden = !dualLine
 
         let prefix = (isPaused && showPauseIcon) ? "⏸ " : ""
@@ -435,7 +453,7 @@ class LyricsWidget: NSObject, PKWidget {
 
         case .beforeFirstLine:
             currentLineLabel.textColor = activeColor
-            currentLineLabel.stringValue = "\(prefix)\(snapshot.upcomingLine?.text ?? "")"
+            currentLineLabel.stringValue = "\(prefix)\(formatLineText(snapshot.upcomingLine?.text ?? ""))"
             nextLineLabel.stringValue = activeLines.count > 1 ? activeLines[1].text : ""
 
         case .inLyrics:
@@ -443,12 +461,12 @@ class LyricsWidget: NSObject, PKWidget {
             let text = snapshot.currentLine?.text.isEmpty == true
                 ? "♪ (instrumental)"
                 : snapshot.currentLine?.text ?? ""
-            currentLineLabel.stringValue = "\(prefix)\(text)"
+            currentLineLabel.stringValue = "\(prefix)\(formatLineText(text))"
             nextLineLabel.stringValue = snapshot.upcomingLine?.text ?? ""
 
         case .afterLastLine:
             currentLineLabel.textColor = activeColor
-            currentLineLabel.stringValue = "\(prefix)\(snapshot.currentLine?.text ?? "")"
+            currentLineLabel.stringValue = "\(prefix)\(formatLineText(snapshot.currentLine?.text ?? ""))"
             nextLineLabel.stringValue = ""
         }
     }
