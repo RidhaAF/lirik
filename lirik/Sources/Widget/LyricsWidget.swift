@@ -50,6 +50,7 @@ class LyricsWidget: NSObject, PKWidget {
     private let containerView = NSStackView()
     private let contentStackView = NSStackView()
     private let textStackView = NSStackView()
+    private let tapButton = PKButton(title: "", target: nil, action: nil)
 
     private let currentLineLabel = NSTextField(labelWithString: "Lirik")
     private let nextLineLabel = NSTextField(labelWithString: "")
@@ -138,10 +139,23 @@ class LyricsWidget: NSObject, PKWidget {
 
         contentStackView.addArrangedSubview(textStackView)
 
-        containerView.addArrangedSubview(contentStackView)
+        // Configure native Touch Bar PKButton wrapper for tap-to-copy
+        tapButton.target = self
+        tapButton.action = #selector(handleTouchBarTap)
+        tapButton.title = ""
+        tapButton.isBordered = false
+        tapButton.addSubview(contentStackView)
 
-        let clickGesture = NSClickGestureRecognizer(target: self, action: #selector(handleTouchBarTap))
-        containerView.addGestureRecognizer(clickGesture)
+        // Layout contentStackView to fill tapButton bounds
+        contentStackView.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            contentStackView.leadingAnchor.constraint(equalTo: tapButton.leadingAnchor),
+            contentStackView.trailingAnchor.constraint(equalTo: tapButton.trailingAnchor),
+            contentStackView.topAnchor.constraint(equalTo: tapButton.topAnchor),
+            contentStackView.bottomAnchor.constraint(equalTo: tapButton.bottomAnchor)
+        ])
+
+        containerView.addArrangedSubview(tapButton)
 
         self.view = containerView
     }

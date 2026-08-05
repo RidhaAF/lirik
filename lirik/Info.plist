@@ -6,6 +6,10 @@
 	<string>Lirik</string>
 	<key>CFBundleDisplayName</key>
 	<string>Lirik</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.1</string>
+	<key>CFBundleVersion</key>
+	<string>1.1</string>
 	<key>CFBundlePackageType</key>
 	<string>BNDL</string>
 	<key>NSPrincipalClass</key>
