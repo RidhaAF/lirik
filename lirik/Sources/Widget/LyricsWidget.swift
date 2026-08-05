@@ -32,10 +32,23 @@ class LyricsWidget: NSObject, PKWidget {
     var view: NSView!
 
     var imageForCustomization: NSImage {
-        let config = NSImage.SymbolConfiguration(pointSize: 16, weight: .bold)
-        return NSImage(systemSymbolName: "music.note.list", accessibilityDescription: "Lirik")?.withSymbolConfiguration(config)
-            ?? NSImage(named: NSImage.touchBarAudioInputTemplateName)
-            ?? NSImage()
+        let size = NSSize(width: 60, height: 20)
+        let image = NSImage(size: size)
+        image.lockFocus()
+
+        let config = NSImage.SymbolConfiguration(pointSize: 13, weight: .bold)
+        if let icon = NSImage(systemSymbolName: "music.note.list", accessibilityDescription: nil)?.withSymbolConfiguration(config) {
+            icon.draw(in: NSRect(x: 0, y: 2, width: 16, height: 16))
+        }
+
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.boldSystemFont(ofSize: 12),
+            .foregroundColor: NSColor.labelColor
+        ]
+        NSString("Lirik").draw(at: NSPoint(x: 20, y: 2), withAttributes: attrs)
+
+        image.unlockFocus()
+        return image
     }
 
     // MARK: - PKWidgetPreference link for Pock Widgets Manager
@@ -377,6 +390,10 @@ class LyricsWidget: NSObject, PKWidget {
         case "gold": return NSColor(red: 1.0, green: 0.84, blue: 0.0, alpha: 1.0)
         case "cyan": return NSColor(red: 0.0, green: 0.85, blue: 1.0, alpha: 1.0)
         case "green": return NSColor(red: 0.2, green: 0.9, blue: 0.4, alpha: 1.0)
+        case "purple": return NSColor(red: 0.75, green: 0.45, blue: 1.0, alpha: 1.0)
+        case "pink": return NSColor(red: 1.0, green: 0.4, blue: 0.7, alpha: 1.0)
+        case "orange": return NSColor(red: 1.0, green: 0.55, blue: 0.0, alpha: 1.0)
+        case "red": return NSColor(red: 1.0, green: 0.3, blue: 0.3, alpha: 1.0)
         default: return .labelColor
         }
     }

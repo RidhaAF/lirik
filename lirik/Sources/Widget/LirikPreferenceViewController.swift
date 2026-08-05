@@ -41,7 +41,7 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
 
     private let dualLineControl = NSSegmentedControl(labels: ["2-Line Karaoke", "1-Line Compact"], trackingMode: .selectOne, target: nil, action: nil)
     private let fontSizeControl = NSSegmentedControl(labels: ["Small (10pt)", "Medium (11pt)", "Large (12pt)"], trackingMode: .selectOne, target: nil, action: nil)
-    private let colorControl = NSSegmentedControl(labels: ["White", "Gold", "Cyan", "Green"], trackingMode: .selectOne, target: nil, action: nil)
+    private let colorControl = NSSegmentedControl(labels: ["White", "Gold", "Cyan", "Green", "Purple", "Pink", "Orange", "Red"], trackingMode: .selectOne, target: nil, action: nil)
     private let alignmentControl = NSSegmentedControl(labels: ["Left Aligned", "Center Aligned"], trackingMode: .selectOne, target: nil, action: nil)
     private let playerPopUp = NSPopUpButton()
     private let pauseIconCheckbox = NSButton(checkboxWithTitle: "Show ⏸ icon when track is paused", target: nil, action: nil)
@@ -195,6 +195,10 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
         case "gold": colorControl.selectedSegment = 1
         case "cyan": colorControl.selectedSegment = 2
         case "green": colorControl.selectedSegment = 3
+        case "purple": colorControl.selectedSegment = 4
+        case "pink": colorControl.selectedSegment = 5
+        case "orange": colorControl.selectedSegment = 6
+        case "red": colorControl.selectedSegment = 7
         default: colorControl.selectedSegment = 0
         }
 
@@ -240,6 +244,10 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
         case 1: color = "gold"
         case 2: color = "cyan"
         case 3: color = "green"
+        case 4: color = "purple"
+        case 5: color = "pink"
+        case 6: color = "orange"
+        case 7: color = "red"
         default: color = "white"
         }
         UserDefaults.standard.set(color, forKey: Self.keyHighlightColor)
