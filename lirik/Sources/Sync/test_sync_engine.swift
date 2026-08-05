@@ -5,14 +5,6 @@
 //
 //  Manual verification script for Phase 3: LRCSyncEngine live seek detection.
 //
-//  Instructions:
-//  1. Play "Yellow" by Coldplay (or any song) in Spotify or Apple Music.
-//  2. The script queries now-playing metadata, fetches & parses synced lyrics,
-//     and starts live position tracking.
-//  3. Seek forward or backward in Spotify / Apple Music — watch the terminal
-//     instantly detect the seek jump and re-resolve the active lyric line
-//     without lag or glitching!
-//
 
 import Foundation
 import AppKit
@@ -180,7 +172,7 @@ enum LRCParser {
     }
 }
 
-// ─── LRCLIBClient & Cache ──────────────────────────────────────────
+// ─── LRCLIBClient ──────────────────────────────────────────────────
 
 private struct LRCLIBResponseDTO: Decodable {
     let id: Int
@@ -318,67 +310,81 @@ guard let media = queryNowPlayingMedia() else {
 print("🎵 Currently Playing: \"\(media.title)\" by \(media.artist) [\(media.source)]")
 
 let client = LRCLIBClient()
+
 let semaphore = DispatchSemaphore(value: 0)
 
-Task {
-    print("🌐 Fetching synced lyrics from LRCLIB...")
-    let res = try await client.fetchLyrics(title: media.title, artist: media.artist, duration: media.duration)
+DispatchQueue.global().async {
+    let group = DispatchGroup()
+    group.enter()
 
-    guard case .synced(_, let lrcText) = res else {
-        print("⚠️ No synced lyrics available for this song on LRCLIB.")
+    var fetchedLines: [LRCLine] = []
+
+    Task {
+        print("🌐 Fetching synced lyrics from LRCLIB...")
+        if let res = try? await client.fetchLyrics(title: media.title, artist: media.artist, duration: media.duration),
+           case .synced(_, let lrcText) = res {
+            fetchedLines = LRCParser.parse(lrcText)
+            print("✅ Parsed \(fetchedLines.count) timestamped lines.\n")
+        } else {
+            print("⚠️ No synced lyrics available for this song on LRCLIB.")
+        }
+        group.leave()
+    }
+
+    group.wait()
+
+    guard !fetchedLines.isEmpty else {
         semaphore.signal()
         return
     }
 
-    let lines = LRCParser.parse(lrcText)
-    print("✅ Parsed \(lines.count) timestamped lines.\n")
+    DispatchQueue.main.async {
+        print("══════════════════════════════════════════════════════")
+        print("STARTING LIVE SYNC MONITOR (Polling every 0.5s for 15s)")
+        print("Instructions: Seek forward or backward in your media player!")
+        print("Watch for [SEEK JUMP] events below:")
+        print("══════════════════════════════════════════════════════\n")
 
-    print("══════════════════════════════════════════════════════")
-    print("STARTING LIVE SYNC MONITOR (Polling every 0.5s)")
-    print("Instructions: Seek forward or backward in your media player!")
-    print("Watch for [SEEK JUMP] events below:")
-    print("══════════════════════════════════════════════════════\n")
+        var lastElapsed: TimeInterval = -1.0
+        var lastIndex: Int? = -99
 
-    var lastElapsed: TimeInterval = -1.0
-    var lastIndex: Int? = -99
+        let timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
+            guard let currentMedia = queryNowPlayingMedia() else { return }
 
-    let timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
-        guard let currentMedia = queryNowPlayingMedia() else { return }
+            let elapsed = currentMedia.elapsed
+            let delta = elapsed - lastElapsed
 
-        let elapsed = currentMedia.elapsed
-        let delta = elapsed - lastElapsed
+            let snapshot = LRCSyncEngine.resolve(elapsedTime: elapsed, lines: fetchedLines)
 
-        let snapshot = LRCSyncEngine.resolve(elapsedTime: elapsed, lines: lines)
+            func fmt(_ t: TimeInterval) -> String {
+                let m = Int(t) / 60
+                let s = Int(t) % 60
+                let ms = Int((t.truncatingRemainder(dividingBy: 1)) * 10)
+                return String(format: "%02d:%02d.%d", m, s, ms)
+            }
 
-        func fmt(_ t: TimeInterval) -> String {
-            let m = Int(t) / 60
-            let s = Int(t) % 60
-            let ms = Int((t.truncatingRemainder(dividingBy: 1)) * 10)
-            return String(format: "%02d:%02d.%d", m, s, ms)
+            let isSeek = lastElapsed >= 0 && (delta < -0.2 || delta > 2.5)
+
+            if isSeek {
+                let direction = delta < 0 ? "⏪ BACKWARD SEEK" : "⏩ FORWARD SEEK"
+                print(String(format: "\n⚡️ [\(direction)] Jumping from %@ → %@", fmt(lastElapsed), fmt(elapsed)))
+            }
+
+            if isSeek || snapshot.currentIndex != lastIndex {
+                let curText = snapshot.currentLine?.text ?? "(instrumental / gap)"
+                let nxtText = snapshot.upcomingLine?.text ?? "(end of lyrics)"
+                print(String(format: "   ⏱ [%@] CURRENT: \"%@\"  |  UPCOMING: \"%@\"", fmt(elapsed), curText, nxtText))
+            }
+
+            lastElapsed = elapsed
+            lastIndex = snapshot.currentIndex
         }
 
-        // Seek detection: if position jumped backward, or forward by > 2.5s (given 0.5s poll)
-        let isSeek = lastElapsed >= 0 && (delta < -0.2 || delta > 2.5)
-
-        if isSeek {
-            let direction = delta < 0 ? "⏪ BACKWARD SEEK" : "⏩ FORWARD SEEK"
-            print(String(format: "\n⚡️ [\(direction)] Jumping from %@ → %@", fmt(lastElapsed), fmt(elapsed)))
-        }
-
-        if isSeek || snapshot.currentIndex != lastIndex {
-            let curText = snapshot.currentLine?.text ?? "(instrumental / gap)"
-            let nxtText = snapshot.upcomingLine?.text ?? "(end of lyrics)"
-            print(String(format: "   ⏱ [%@] CURRENT: \"%@\"  |  UPCOMING: \"%@\"", fmt(elapsed), curText, nxtText))
-        }
-
-        lastElapsed = elapsed
-        lastIndex = snapshot.currentIndex
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 5))
+        timer.invalidate()
+        print("\n⏱ Live sync monitor finished.")
+        semaphore.signal()
     }
-
-    RunLoop.main.run(until: Date(timeIntervalSinceNow: 45))
-    timer.invalidate()
-    print("\n⏱ Live sync test finished.")
-    semaphore.signal()
 }
 
 semaphore.wait()
