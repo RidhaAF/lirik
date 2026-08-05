@@ -31,6 +31,12 @@ class LyricsWidget: NSObject, PKWidget {
     var customizationLabel: String = "Lirik - Synced Lyrics"
     var view: NSView!
 
+    // MARK: - PKWidgetPreference link for Pock Widgets Manager
+
+    @objc var hasPreferencesView: Bool { return true }
+    @objc var preferenceClass: PKWidgetPreference.Type? { return LirikPreferenceViewController.self }
+    @objc var preferenceView: PKWidgetPreference? { return LirikPreferenceViewController() }
+
     // MARK: - UI Components
 
     private let containerView = NSStackView()
@@ -314,7 +320,19 @@ class LyricsWidget: NSObject, PKWidget {
     }
 
     private func renderSyncSnapshot(_ snapshot: LRCSyncSnapshot, isPaused: Bool) {
-        let prefix = isPaused ? "⏸ " : ""
+        let defaults = UserDefaults.standard
+        let dualLine = defaults.object(forKey: LirikPreferenceViewController.keyDualLine) as? Bool ?? true
+        let fontSize = defaults.object(forKey: LirikPreferenceViewController.keyFontSize) as? Int ?? 11
+        let showPauseIcon = defaults.object(forKey: LirikPreferenceViewController.keyShowPauseIcon) as? Bool ?? true
+
+        // Apply dynamic font sizes
+        currentLineLabel.font = NSFont.boldSystemFont(ofSize: CGFloat(fontSize))
+        nextLineLabel.font = NSFont.systemFont(ofSize: CGFloat(max(8, fontSize - 2)))
+
+        // Toggle 2-line vs 1-line mode
+        nextLineLabel.isHidden = !dualLine
+
+        let prefix = (isPaused && showPauseIcon) ? "⏸ " : ""
 
         switch snapshot.positionState {
         case .empty:

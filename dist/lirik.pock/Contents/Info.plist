@@ -6,6 +6,8 @@
 	<string>24G720</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
+	<key>CFBundleDisplayName</key>
+	<string>Lirik</string>
 	<key>CFBundleExecutable</key>
 	<string>lirik</string>
 	<key>CFBundleIdentifier</key>
