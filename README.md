@@ -35,7 +35,7 @@
 ### Step-by-Step Installation Guide
 
 #### 1. Download the Widget
-- Download the latest **`lirik.pock.zip`** from [GitHub Releases](https://github.com/ridhaaf/lirik/releases).
+- Download the latest **`lirik.pock.zip`** from [GitHub Releases](https://github.com/RidhaAF/lirik/releases).
 
 #### 2. Install into Pock
 - Unzip `lirik.pock.zip` to get `lirik.pock`.
@@ -87,7 +87,7 @@ You can customize Lirik's layout and font size directly inside Pock:
 
 ```bash
 # Clone the repository
-git clone https://github.org/ridhaaf/lirik.git
+git clone https://github.com/RidhaAF/lirik.git
 cd lirik
 
 # Install dependencies via CocoaPods
