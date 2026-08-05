@@ -14,7 +14,7 @@ import AppKit
 import PockKit
 
 /// UI Display State for the Lyrics Touch Bar widget.
-enum LyricsWidgetUIState {
+enum LyricsWidgetUIState: Equatable {
     case noTrackPlaying
     case loading(title: String, artist: String)
     case noLyricsFound(title: String, artist: String)
@@ -33,9 +33,13 @@ final class LyricsWidget: NSObject, PKWidget {
     // MARK: - UI Components
 
     private let containerView = NSStackView()
+    private let contentStackView = NSStackView()
     private let textStackView = NSStackView()
+
     private let currentLineLabel = NSTextField(labelWithString: "Lirik")
     private let nextLineLabel = NSTextField(labelWithString: "")
+    private let stylusProgressView = StylusProgressView()
+
     private let refreshButton = PKButton(title: "↺", target: nil, action: nil)
     private let closeButton = PKButton(title: "✕", target: nil, action: nil)
 
@@ -45,7 +49,10 @@ final class LyricsWidget: NSObject, PKWidget {
     private let lrclibClient = LRCLIBClient()
     private let lyricsCache = LyricsCache()
 
-    // MARK: - Widget State
+    // MARK: - Widget State & Race Condition Fencing
+
+    private var activeTrackKey: String = ""
+    private var inFlightFetchTask: Task<Void, Never>?
 
     private var uiState: LyricsWidgetUIState = .noTrackPlaying {
         didSet {
@@ -56,6 +63,7 @@ final class LyricsWidget: NSObject, PKWidget {
     }
 
     private var activeLines: [LRCLine] = []
+    private var isCurrentlyPaused: Bool = false
 
     // MARK: - Init
 
@@ -74,18 +82,25 @@ final class LyricsWidget: NSObject, PKWidget {
 
     func viewDisappeared() {
         NSLog("[LyricsWidget] viewDisappeared — stopping NowPlayingWatcher")
+        inFlightFetchTask?.cancel()
         nowPlayingWatcher.stopWatching()
     }
 
     // MARK: - UI Setup
 
     private func setupUI() {
-        // Container stack view (horizontal: text display + action buttons)
+        // Container stack view (horizontal: content + minimal glyph controls)
         containerView.orientation = .horizontal
         containerView.alignment = .centerY
         containerView.distribution = .fill
         containerView.spacing = 8
         containerView.edgeInsets = NSEdgeInsets(top: 2, left: 8, bottom: 2, right: 8)
+
+        // Content stack view (vertical: text stack + stylus progress view)
+        contentStackView.orientation = .vertical
+        contentStackView.alignment = .fill
+        contentStackView.distribution = .fill
+        contentStackView.spacing = 2
 
         // Text stack view (vertical: current line + next line)
         textStackView.orientation = .vertical
@@ -94,13 +109,13 @@ final class LyricsWidget: NSObject, PKWidget {
         textStackView.spacing = 1
 
         // Current line label (bold / highlighted)
-        currentLineLabel.font = NSFont.boldSystemFont(ofSize: 13)
+        currentLineLabel.font = NSFont.boldSystemFont(ofSize: 12)
         currentLineLabel.textColor = .labelColor
         currentLineLabel.lineBreakMode = .byTruncatingTail
         currentLineLabel.stringValue = "Lirik"
 
         // Next line label (dimmed / secondary)
-        nextLineLabel.font = NSFont.systemFont(ofSize: 11)
+        nextLineLabel.font = NSFont.systemFont(ofSize: 10)
         nextLineLabel.textColor = .secondaryLabelColor
         nextLineLabel.lineBreakMode = .byTruncatingTail
         nextLineLabel.stringValue = ""
@@ -108,17 +123,23 @@ final class LyricsWidget: NSObject, PKWidget {
         textStackView.addArrangedSubview(currentLineLabel)
         textStackView.addArrangedSubview(nextLineLabel)
 
-        // Configure Refresh Button
+        // Stylus progress view height (4px tape groove)
+        stylusProgressView.heightAnchor.constraint(equalToConstant: 4).isActive = true
+
+        contentStackView.addArrangedSubview(textStackView)
+        contentStackView.addArrangedSubview(stylusProgressView)
+
+        // Configure Refresh Button (minimal glyph per PRD §8)
         refreshButton.target = self
         refreshButton.action = #selector(handleRefresh)
-        refreshButton.widthAnchor.constraint(equalToConstant: 28).isActive = true
+        refreshButton.widthAnchor.constraint(equalToConstant: 24).isActive = true
 
-        // Configure Close Button (Hides widget view per user preference)
+        // Configure Close Button (minimal glyph per PRD §8)
         closeButton.target = self
         closeButton.action = #selector(handleClose)
-        closeButton.widthAnchor.constraint(equalToConstant: 28).isActive = true
+        closeButton.widthAnchor.constraint(equalToConstant: 24).isActive = true
 
-        containerView.addArrangedSubview(textStackView)
+        containerView.addArrangedSubview(contentStackView)
         containerView.addArrangedSubview(refreshButton)
         containerView.addArrangedSubview(closeButton)
 
@@ -128,44 +149,67 @@ final class LyricsWidget: NSObject, PKWidget {
     // MARK: - Watcher Callbacks
 
     private func setupWatcherCallbacks() {
-        // Handle track changes
+        // Handle track changes & rapid skipping
         nowPlayingWatcher.onTrackChange = { [weak self] track in
             guard let self else { return }
+
+            // Cancel any in-flight fetch task from previous track immediately
+            self.inFlightFetchTask?.cancel()
+
             if let track = track {
-                self.loadLyrics(for: track, forceRefresh: false)
+                self.isCurrentlyPaused = !track.isPlaying
+                let newKey = LyricsCache.makeTrackKey(title: track.title, artist: track.artist, duration: track.duration)
+                self.activeTrackKey = newKey
+                self.loadLyrics(for: track, expectedKey: newKey, forceRefresh: false)
             } else {
+                self.activeTrackKey = ""
                 self.activeLines = []
+                self.isCurrentlyPaused = false
                 self.uiState = .noTrackPlaying
             }
         }
 
-        // Handle elapsed time ticks for synced lyrics
+        // Handle elapsed time ticks for synced lyrics & progress bar
         nowPlayingWatcher.onElapsedTimeUpdate = { [weak self] elapsed in
             guard let self else { return }
-            guard case .synced(_, _, let lines) = self.uiState else { return }
 
-            let snapshot = LRCSyncEngine.resolve(elapsedTime: elapsed, lines: lines)
+            guard let track = self.nowPlayingWatcher.currentTrack else { return }
+
             DispatchQueue.main.async {
-                self.renderSyncSnapshot(snapshot)
+                self.isCurrentlyPaused = !track.isPlaying
+                self.stylusProgressView.isPaused = !track.isPlaying
+
+                if let duration = track.duration, duration > 0 {
+                    self.stylusProgressView.progress = elapsed / duration
+                }
+
+                // If track is paused, freeze line scroll animations
+                if case .synced(_, _, let lines) = self.uiState {
+                    let snapshot = LRCSyncEngine.resolve(elapsedTime: elapsed, lines: lines)
+                    self.renderSyncSnapshot(snapshot, isPaused: !track.isPlaying)
+                }
             }
         }
     }
 
-    // MARK: - Lyrics Loading & Caching Flow
+    // MARK: - Lyrics Loading & Caching Flow (Race Condition Fenced)
 
-    private func loadLyrics(for track: NowPlayingTrack, forceRefresh: Bool) {
+    private func loadLyrics(for track: NowPlayingTrack, expectedKey: String, forceRefresh: Bool) {
         uiState = .loading(title: track.title, artist: track.artist)
 
-        // Step 1: Check cache unless forceRefresh is true
+        // Step 1: Check cache unless forceRefresh is requested
         if !forceRefresh,
-           let cached = lyricsCache.get(title: track.title, artist: track.artist, duration: track.duration) {
+           let cached = lyricsCache.get(byKey: expectedKey) {
+            // Guard against stale track key from rapid skipping
+            guard activeTrackKey == expectedKey else { return }
             applyCachedLyrics(cached, for: track)
             return
         }
 
-        // Step 2: Query LRCLIB REST API asynchronously
-        Task { [weak self] in
+        // Step 2: Query LRCLIB REST API asynchronously with task cancellation support
+        inFlightFetchTask = Task { [weak self] in
             guard let self else { return }
+
             do {
                 let result = try await self.lrclibClient.fetchLyrics(
                     title: track.title,
@@ -173,6 +217,12 @@ final class LyricsWidget: NSObject, PKWidget {
                     album: track.album,
                     duration: track.duration
                 )
+
+                // FENCING CHECK: Cancel if task was cancelled or user skipped to a new track while fetching
+                guard !Task.isCancelled, self.activeTrackKey == expectedKey else {
+                    NSLog("[LyricsWidget] Ignored stale lyrics fetch for key: \(expectedKey)")
+                    return
+                }
 
                 let cachedEntry: CachedLyrics
                 let newState: LyricsWidgetUIState
@@ -182,7 +232,7 @@ final class LyricsWidget: NSObject, PKWidget {
                     let parsedLines = LRCParser.parse(lrcText)
                     cachedEntry = CachedLyrics(
                         lrclibID: id,
-                        trackKey: LyricsCache.makeTrackKey(title: track.title, artist: track.artist, duration: track.duration),
+                        trackKey: expectedKey,
                         lyricsState: .synced(lines: parsedLines, rawLRC: lrcText),
                         cachedAt: Date()
                     )
@@ -192,7 +242,7 @@ final class LyricsWidget: NSObject, PKWidget {
                 case .plainOnly(let id, let plainText):
                     cachedEntry = CachedLyrics(
                         lrclibID: id,
-                        trackKey: LyricsCache.makeTrackKey(title: track.title, artist: track.artist, duration: track.duration),
+                        trackKey: expectedKey,
                         lyricsState: .plainOnly(text: plainText),
                         cachedAt: Date()
                     )
@@ -202,7 +252,7 @@ final class LyricsWidget: NSObject, PKWidget {
                 case .notFound:
                     cachedEntry = CachedLyrics(
                         lrclibID: nil,
-                        trackKey: LyricsCache.makeTrackKey(title: track.title, artist: track.artist, duration: track.duration),
+                        trackKey: expectedKey,
                         lyricsState: .notFound,
                         cachedAt: Date()
                     )
@@ -210,10 +260,13 @@ final class LyricsWidget: NSObject, PKWidget {
                     self.activeLines = []
                 }
 
+                // Final check before committing state
+                guard !Task.isCancelled, self.activeTrackKey == expectedKey else { return }
                 self.lyricsCache.save(cachedEntry)
                 self.uiState = newState
 
             } catch {
+                guard !Task.isCancelled, self.activeTrackKey == expectedKey else { return }
                 NSLog("[LyricsWidget] Network error loading lyrics: \(error.localizedDescription)")
                 self.uiState = .noLyricsFound(title: track.title, artist: track.artist)
             }
@@ -242,6 +295,7 @@ final class LyricsWidget: NSObject, PKWidget {
             currentLineLabel.stringValue = "Lirik"
             currentLineLabel.textColor = .secondaryLabelColor
             nextLineLabel.stringValue = "No track playing"
+            stylusProgressView.progress = 0.0
 
         case .loading(let title, let artist):
             currentLineLabel.stringValue = "\(title) — \(artist)"
@@ -269,29 +323,31 @@ final class LyricsWidget: NSObject, PKWidget {
         }
     }
 
-    private func renderSyncSnapshot(_ snapshot: LRCSyncSnapshot) {
+    private func renderSyncSnapshot(_ snapshot: LRCSyncSnapshot, isPaused: Bool) {
+        let prefix = isPaused ? "⏸ " : ""
+
         switch snapshot.positionState {
         case .empty:
             break
 
         case .beforeFirstLine:
             if let upcoming = snapshot.upcomingLine {
-                currentLineLabel.stringValue = "♪ Intro"
+                currentLineLabel.stringValue = "\(prefix)♪ Intro"
                 currentLineLabel.textColor = .secondaryLabelColor
                 nextLineLabel.stringValue = upcoming.text
             }
 
         case .inLyrics:
-            currentLineLabel.textColor = .labelColor
-            currentLineLabel.stringValue = snapshot.currentLine?.text.isEmpty == true
+            currentLineLabel.textColor = isPaused ? .secondaryLabelColor : .labelColor
+            let text = snapshot.currentLine?.text.isEmpty == true
                 ? "♪ (instrumental)"
                 : snapshot.currentLine?.text ?? ""
-
+            currentLineLabel.stringValue = "\(prefix)\(text)"
             nextLineLabel.stringValue = snapshot.upcomingLine?.text ?? ""
 
         case .afterLastLine:
-            currentLineLabel.textColor = .labelColor
-            currentLineLabel.stringValue = snapshot.currentLine?.text ?? ""
+            currentLineLabel.textColor = isPaused ? .secondaryLabelColor : .labelColor
+            currentLineLabel.stringValue = "\(prefix)\(snapshot.currentLine?.text ?? "")"
             nextLineLabel.stringValue = "♪ Outro"
         }
     }
@@ -301,7 +357,8 @@ final class LyricsWidget: NSObject, PKWidget {
     @objc private func handleRefresh() {
         NSLog("[LyricsWidget] Refresh tapped — forcing LRCLIB re-fetch")
         guard let track = nowPlayingWatcher.currentTrack else { return }
-        loadLyrics(for: track, forceRefresh: true)
+        let key = LyricsCache.makeTrackKey(title: track.title, artist: track.artist, duration: track.duration)
+        loadLyrics(for: track, expectedKey: key, forceRefresh: true)
     }
 
     @objc private func handleClose() {
