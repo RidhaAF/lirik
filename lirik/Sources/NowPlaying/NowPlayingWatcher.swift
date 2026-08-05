@@ -30,6 +30,9 @@ final class NowPlayingWatcher {
     /// are the single source of truth for sync position.
     var onElapsedTimeUpdate: ((TimeInterval) -> Void)?
 
+    /// Called when macOS Automation permission is denied for a media app.
+    var onPermissionDenied: ((String) -> Void)?
+
     /// The most recently observed track. nil if nothing is playing
     /// or no backend has reported yet.
     private(set) var currentTrack: NowPlayingTrack?
@@ -119,6 +122,10 @@ final class NowPlayingWatcher {
 
     private func startAppleScriptBackend() {
         activeBackend = .appleScript
+
+        appleScriptBackend.onPermissionDenied = { [weak self] appName in
+            self?.onPermissionDenied?(appName)
+        }
 
         appleScriptBackend.startPolling { [weak self] newTrack in
             guard let self else { return }

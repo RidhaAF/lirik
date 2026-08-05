@@ -16,6 +16,7 @@ import PockKit
 /// UI Display State for the Lyrics Touch Bar widget.
 enum LyricsWidgetUIState: Equatable {
     case noTrackPlaying
+    case permissionDenied(appName: String)
     case loading(title: String, artist: String)
     case noLyricsFound(title: String, artist: String)
     case staticOnly(title: String, artist: String, text: String)
@@ -152,6 +153,11 @@ class LyricsWidget: NSObject, PKWidget {
     // MARK: - Watcher Callbacks
 
     private func setupWatcherCallbacks() {
+        // Handle permission error notification
+        nowPlayingWatcher.onPermissionDenied = { [weak self] appName in
+            self?.uiState = .permissionDenied(appName: appName)
+        }
+
         // Handle track changes & rapid skipping
         nowPlayingWatcher.onTrackChange = { [weak self] track in
             guard let self else { return }
@@ -298,6 +304,12 @@ class LyricsWidget: NSObject, PKWidget {
             currentLineLabel.stringValue = "Lirik"
             currentLineLabel.textColor = .secondaryLabelColor
             nextLineLabel.stringValue = "No track playing"
+            stylusProgressView.progress = 0.0
+
+        case .permissionDenied(let appName):
+            currentLineLabel.stringValue = "Permission Required"
+            currentLineLabel.textColor = .systemRed
+            nextLineLabel.stringValue = "Allow Pock -> \(appName) in System Settings"
             stylusProgressView.progress = 0.0
 
         case .loading(let title, let artist):

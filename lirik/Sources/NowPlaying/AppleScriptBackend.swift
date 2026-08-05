@@ -30,6 +30,8 @@ final class AppleScriptBackend {
 
     private var pollTimer: Timer?
     private var onUpdate: ((NowPlayingTrack?) -> Void)?
+    /// Callback fired when macOS blocks AppleScript with error -1743 (Automation Permission Denied)
+    var onPermissionDenied: ((String) -> Void)?
 
     // MARK: - Public API
 
@@ -125,7 +127,7 @@ final class AppleScriptBackend {
         end tell
         """
 
-        guard let result = runAppleScript(script) else { return nil }
+        guard let result = runAppleScript(script, appName: "Spotify") else { return nil }
         if result == "|||STOPPED|||" { return nil }
 
         let parts = result.components(separatedBy: "|||")
@@ -167,7 +169,7 @@ final class AppleScriptBackend {
         end tell
         """
 
-        guard let result = runAppleScript(script) else { return nil }
+        guard let result = runAppleScript(script, appName: "Apple Music") else { return nil }
         if result == "|||STOPPED|||" { return nil }
 
         let parts = result.components(separatedBy: "|||")
@@ -197,18 +199,18 @@ final class AppleScriptBackend {
 
     /// Executes an AppleScript string and returns the result as a
     /// trimmed string, or nil on error.
-    private func runAppleScript(_ source: String) -> String? {
+    private func runAppleScript(_ source: String, appName: String) -> String? {
         let appleScript = NSAppleScript(source: source)
         var errorInfo: NSDictionary?
         let result = appleScript?.executeAndReturnError(&errorInfo)
 
         if let error = errorInfo {
-            // -128 = user cancelled (app not running / permission denied first time)
-            // -1728 = can't get current track (nothing playing)
-            // These are expected, not worth logging as errors.
             let errorNumber = error[NSAppleScript.errorNumber] as? Int ?? 0
             if errorNumber == -1743 {
-                NSLog("[AppleScriptBackend] ⚠️ AUTOMATION PERMISSION DENIED (-1743). Please grant Pock permission to control Spotify/Music in System Settings -> Privacy & Security -> Automation.")
+                NSLog("[AppleScriptBackend] ⚠️ AUTOMATION PERMISSION DENIED (-1743) for \(appName). Grant Pock permission in System Settings -> Privacy & Security -> Automation.")
+                DispatchQueue.main.async { [weak self] in
+                    self?.onPermissionDenied?(appName)
+                }
             } else if errorNumber != -128 && errorNumber != -1728 {
                 NSLog("[AppleScriptBackend] Script error \(errorNumber): \(error[NSAppleScript.errorMessage] as? String ?? "unknown")")
             }
