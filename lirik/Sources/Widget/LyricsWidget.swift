@@ -133,12 +133,24 @@ class LyricsWidget: NSObject, PKWidget {
         contentStackView.addArrangedSubview(textStackView)
         contentStackView.addArrangedSubview(stylusProgressView)
 
-        // Configure Refresh Button (minimal glyph per PRD §8)
+        // Configure Refresh Button (vector SF Symbol for zero character baseline clipping)
+        if let refreshImg = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "Refresh") {
+            refreshButton.image = refreshImg
+            refreshButton.title = ""
+        } else {
+            refreshButton.title = "↻"
+        }
         refreshButton.target = self
         refreshButton.action = #selector(handleRefresh)
         refreshButton.widthAnchor.constraint(equalToConstant: 24).isActive = true
 
-        // Configure Close Button (minimal glyph per PRD §8)
+        // Configure Close Button (vector SF Symbol for zero character baseline clipping)
+        if let closeImg = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close") {
+            closeButton.image = closeImg
+            closeButton.title = ""
+        } else {
+            closeButton.title = "✕"
+        }
         closeButton.target = self
         closeButton.action = #selector(handleClose)
         closeButton.widthAnchor.constraint(equalToConstant: 24).isActive = true

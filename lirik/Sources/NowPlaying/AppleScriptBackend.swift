@@ -16,6 +16,7 @@
 
 import Foundation
 import AppKit
+import CoreServices
 
 /// Polls Spotify and Apple Music via AppleScript to detect what's playing.
 final class AppleScriptBackend {
@@ -33,16 +34,34 @@ final class AppleScriptBackend {
     /// Callback fired when macOS blocks AppleScript with error -1743 (Automation Permission Denied)
     var onPermissionDenied: ((String) -> Void)?
 
+    // MARK: - Automation Permission Prompt Trigger
+
+    /// Requests macOS Automation permission for the target application bundle identifier.
+    /// Calling this on the main thread causes macOS to present the system authorization alert:
+    /// "[App] would like to control [TargetApp]. [Don't Allow] [OK]"
+    @discardableResult
+    static func requestAutomationPermission(for bundleID: String) -> OSStatus {
+        var address = AEAddressDesc()
+        let data = bundleID.data(using: .utf8)!
+        let status = data.withUnsafeBytes { ptr -> OSStatus in
+            guard let base = ptr.baseAddress else { return OSStatus(errAEEventNotPermitted) }
+            return OSStatus(AECreateDesc(typeApplicationBundleID, base, data.count, &address))
+        }
+        guard status == noErr else { return status }
+
+        let result = AEDeterminePermissionToAutomateTarget(&address, typeWildCard, typeWildCard, true)
+        AEDisposeDesc(&address)
+        return result
+    }
+
     // MARK: - Public API
 
     /// Performs a one-shot fetch of now-playing info from whichever
     /// supported app is currently running and playing.
     func fetchNowPlaying(completion: @escaping (NowPlayingTrack?) -> Void) {
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        DispatchQueue.main.async { [weak self] in
             let track = self?.queryNowPlaying()
-            DispatchQueue.main.async {
-                completion(track)
-            }
+            completion(track)
         }
     }
 
@@ -52,23 +71,27 @@ final class AppleScriptBackend {
     func startPolling(onUpdate: @escaping (NowPlayingTrack?) -> Void) {
         self.onUpdate = onUpdate
 
+        // Prompt for permissions upfront on main thread if needed
+        if isAppRunning(bundleIdentifier: "com.spotify.client") {
+            Self.requestAutomationPermission(for: "com.spotify.client")
+        }
+        if isAppRunning(bundleIdentifier: "com.apple.Music") {
+            Self.requestAutomationPermission(for: "com.apple.Music")
+        }
+
         // Fire immediately, then repeat on interval
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        DispatchQueue.main.async { [weak self] in
             let track = self?.queryNowPlaying()
-            DispatchQueue.main.async {
-                onUpdate(track)
-            }
+            onUpdate(track)
         }
 
         pollTimer = Timer.scheduledTimer(
             withTimeInterval: pollingInterval,
             repeats: true
         ) { [weak self] _ in
-            DispatchQueue.global(qos: .userInitiated).async {
+            DispatchQueue.main.async {
                 let track = self?.queryNowPlaying()
-                DispatchQueue.main.async {
-                    self?.onUpdate?(track)
-                }
+                self?.onUpdate?(track)
             }
         }
     }
