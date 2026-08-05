@@ -37,8 +37,15 @@ class LyricsWidget: NSObject, PKWidget {
         image.lockFocus()
 
         let config = NSImage.SymbolConfiguration(pointSize: 13, weight: .bold)
-        if let icon = NSImage(systemSymbolName: "music.note.list", accessibilityDescription: nil)?.withSymbolConfiguration(config) {
-            icon.draw(in: NSRect(x: 0, y: 2, width: 16, height: 16))
+        if let rawIcon = NSImage(systemSymbolName: "music.note.list", accessibilityDescription: nil)?.withSymbolConfiguration(config) {
+            let tintedIcon = NSImage(size: NSSize(width: 16, height: 16))
+            tintedIcon.lockFocus()
+            NSColor.labelColor.set()
+            NSRect(x: 0, y: 0, width: 16, height: 16).fill()
+            rawIcon.draw(in: NSRect(x: 0, y: 0, width: 16, height: 16), from: .zero, operation: .destinationIn, fraction: 1.0)
+            tintedIcon.unlockFocus()
+
+            tintedIcon.draw(in: NSRect(x: 0, y: 2, width: 16, height: 16))
         }
 
         let attrs: [NSAttributedString.Key: Any] = [
@@ -48,6 +55,7 @@ class LyricsWidget: NSObject, PKWidget {
         NSString("Lirik").draw(at: NSPoint(x: 20, y: 2), withAttributes: attrs)
 
         image.unlockFocus()
+        image.isTemplate = true
         return image
     }
 
