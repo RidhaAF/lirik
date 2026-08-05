@@ -31,6 +31,13 @@ class LyricsWidget: NSObject, PKWidget {
     var customizationLabel: String = "Lirik - Synced Lyrics"
     var view: NSView!
 
+    var imageForCustomization: NSImage {
+        let config = NSImage.SymbolConfiguration(pointSize: 16, weight: .bold)
+        return NSImage(systemSymbolName: "music.note.list", accessibilityDescription: "Lirik")?.withSymbolConfiguration(config)
+            ?? NSImage(named: NSImage.touchBarAudioInputTemplateName)
+            ?? NSImage()
+    }
+
     // MARK: - PKWidgetPreference link for Pock Widgets Manager
 
     @objc var hasPreferencesView: Bool { return true }
@@ -133,7 +140,35 @@ class LyricsWidget: NSObject, PKWidget {
 
         containerView.addArrangedSubview(contentStackView)
 
+        let clickGesture = NSClickGestureRecognizer(target: self, action: #selector(handleTouchBarTap))
+        containerView.addGestureRecognizer(clickGesture)
+
         self.view = containerView
+    }
+
+    // MARK: - Touch Bar Tap Gesture Handler
+
+    @objc private func handleTouchBarTap() {
+        let textToCopy = currentLineLabel.stringValue.replacingOccurrences(of: "⏸ ", with: "").trimmingCharacters(in: .whitespaces)
+        guard !textToCopy.isEmpty,
+              textToCopy != "Lirik",
+              textToCopy != "Fetching lyrics...",
+              textToCopy != "No track playing",
+              textToCopy != "No synced lyrics available",
+              textToCopy != "📋 Copied!" else { return }
+
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(textToCopy, forType: .string)
+
+        let previousText = currentLineLabel.stringValue
+        currentLineLabel.stringValue = "📋 Copied to Clipboard!"
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+            guard let self = self else { return }
+            if self.currentLineLabel.stringValue == "📋 Copied to Clipboard!" {
+                self.currentLineLabel.stringValue = previousText
+            }
+        }
     }
 
     // MARK: - Watcher Callbacks
@@ -164,7 +199,7 @@ class LyricsWidget: NSObject, PKWidget {
             }
         }
 
-        // Handle elapsed time ticks for synced lyrics
+        // Handle elapsed time ticks for synced & static lyrics
         nowPlayingWatcher.onElapsedTimeUpdate = { [weak self] elapsed in
             guard let self else { return }
 
@@ -173,10 +208,11 @@ class LyricsWidget: NSObject, PKWidget {
             DispatchQueue.main.async {
                 self.isCurrentlyPaused = !track.isPlaying
 
-                // If track is paused, freeze line scroll animations
                 if case .synced(_, _, let lines) = self.uiState {
                     let snapshot = LRCSyncEngine.resolve(elapsedTime: elapsed, lines: lines)
                     self.renderSyncSnapshot(snapshot, isPaused: !track.isPlaying)
+                } else if case .staticOnly(_, _, let text) = self.uiState {
+                    self.renderStaticLyrics(text, elapsed: elapsed, trackDuration: track.duration, isPaused: !track.isPlaying)
                 }
             }
         }
@@ -297,15 +333,14 @@ class LyricsWidget: NSObject, PKWidget {
             nextLineLabel.stringValue = ""
 
         case .noLyricsFound:
-            currentLineLabel.stringValue = "No synced lyrics available"
+            currentLineLabel.stringValue = "No lyrics available"
             currentLineLabel.textColor = .secondaryLabelColor
             nextLineLabel.stringValue = ""
 
         case .staticOnly(_, _, let text):
-            currentLineLabel.stringValue = "Static lyrics"
-            currentLineLabel.textColor = .secondaryLabelColor
-            let firstLine = text.components(separatedBy: .newlines).first(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }) ?? text
-            nextLineLabel.stringValue = firstLine
+            let elapsed = nowPlayingWatcher.currentTrack?.elapsedTime ?? 0
+            let duration = nowPlayingWatcher.currentTrack?.duration
+            renderStaticLyrics(text, elapsed: elapsed, trackDuration: duration, isPaused: isCurrentlyPaused)
 
         case .synced(_, _, let lines):
             if lines.isEmpty {
@@ -318,6 +353,50 @@ class LyricsWidget: NSObject, PKWidget {
                 renderSyncSnapshot(snapshot, isPaused: isCurrentlyPaused)
             }
         }
+    }
+
+    private func resolveHighlightColor(isPaused: Bool) -> NSColor {
+        guard !isPaused else { return .secondaryLabelColor }
+        let defaults = UserDefaults.standard
+        let colorKey = defaults.string(forKey: LirikPreferenceViewController.keyHighlightColor) ?? "white"
+        switch colorKey {
+        case "gold": return NSColor(red: 1.0, green: 0.84, blue: 0.0, alpha: 1.0)
+        case "cyan": return NSColor(red: 0.0, green: 0.85, blue: 1.0, alpha: 1.0)
+        case "green": return NSColor(red: 0.2, green: 0.9, blue: 0.4, alpha: 1.0)
+        default: return .labelColor
+        }
+    }
+
+    private func renderStaticLyrics(_ text: String, elapsed: TimeInterval, trackDuration: TimeInterval?, isPaused: Bool) {
+        let defaults = UserDefaults.standard
+        let dualLine = defaults.object(forKey: LirikPreferenceViewController.keyDualLine) as? Bool ?? true
+        let fontSize = defaults.object(forKey: LirikPreferenceViewController.keyFontSize) as? Int ?? 11
+        let showPauseIcon = defaults.object(forKey: LirikPreferenceViewController.keyShowPauseIcon) as? Bool ?? true
+
+        currentLineLabel.font = NSFont.boldSystemFont(ofSize: CGFloat(fontSize))
+        nextLineLabel.font = NSFont.systemFont(ofSize: CGFloat(max(8, fontSize - 2)))
+        nextLineLabel.isHidden = !dualLine
+
+        let lines = text.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+
+        guard !lines.isEmpty else {
+            currentLineLabel.stringValue = "Static lyrics"
+            currentLineLabel.textColor = .secondaryLabelColor
+            nextLineLabel.stringValue = ""
+            return
+        }
+
+        let totalDuration = (trackDuration ?? 0) > 0 ? trackDuration! : 180.0
+        let lineDuration = max(2.5, totalDuration / Double(lines.count))
+        let currentIndex = min(lines.count - 1, max(0, Int(elapsed / lineDuration)))
+        let nextIndex = currentIndex + 1 < lines.count ? currentIndex + 1 : nil
+
+        let prefix = (isPaused && showPauseIcon) ? "⏸ " : ""
+        currentLineLabel.textColor = resolveHighlightColor(isPaused: isPaused)
+        currentLineLabel.stringValue = "\(prefix)\(lines[currentIndex])"
+        nextLineLabel.stringValue = nextIndex != nil ? lines[nextIndex!] : ""
     }
 
     private func renderSyncSnapshot(_ snapshot: LRCSyncSnapshot, isPaused: Bool) {
@@ -334,18 +413,19 @@ class LyricsWidget: NSObject, PKWidget {
         nextLineLabel.isHidden = !dualLine
 
         let prefix = (isPaused && showPauseIcon) ? "⏸ " : ""
+        let activeColor = resolveHighlightColor(isPaused: isPaused)
 
         switch snapshot.positionState {
         case .empty:
             break
 
         case .beforeFirstLine:
-            currentLineLabel.textColor = isPaused ? .secondaryLabelColor : .labelColor
+            currentLineLabel.textColor = activeColor
             currentLineLabel.stringValue = "\(prefix)\(snapshot.upcomingLine?.text ?? "")"
             nextLineLabel.stringValue = activeLines.count > 1 ? activeLines[1].text : ""
 
         case .inLyrics:
-            currentLineLabel.textColor = isPaused ? .secondaryLabelColor : .labelColor
+            currentLineLabel.textColor = activeColor
             let text = snapshot.currentLine?.text.isEmpty == true
                 ? "♪ (instrumental)"
                 : snapshot.currentLine?.text ?? ""
@@ -353,7 +433,7 @@ class LyricsWidget: NSObject, PKWidget {
             nextLineLabel.stringValue = snapshot.upcomingLine?.text ?? ""
 
         case .afterLastLine:
-            currentLineLabel.textColor = isPaused ? .secondaryLabelColor : .labelColor
+            currentLineLabel.textColor = activeColor
             currentLineLabel.stringValue = "\(prefix)\(snapshot.currentLine?.text ?? "")"
             nextLineLabel.stringValue = ""
         }

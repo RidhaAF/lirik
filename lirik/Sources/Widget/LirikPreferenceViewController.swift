@@ -33,11 +33,13 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
     static let keyFontSize = "io.github.ridhaaf.lirik.fontSize"
     static let keyPreferredPlayer = "io.github.ridhaaf.lirik.preferredPlayer"
     static let keyShowPauseIcon = "io.github.ridhaaf.lirik.showPauseIcon"
+    static let keyHighlightColor = "io.github.ridhaaf.lirik.highlightColor"
 
     // MARK: - UI Controls
 
     private let dualLineControl = NSSegmentedControl(labels: ["2-Line Karaoke", "1-Line Compact"], trackingMode: .selectOne, target: nil, action: nil)
     private let fontSizeControl = NSSegmentedControl(labels: ["Small (10pt)", "Medium (11pt)", "Large (12pt)"], trackingMode: .selectOne, target: nil, action: nil)
+    private let colorControl = NSSegmentedControl(labels: ["White", "Gold", "Cyan", "Green"], trackingMode: .selectOne, target: nil, action: nil)
     private let playerPopUp = NSPopUpButton()
     private let pauseIconCheckbox = NSButton(checkboxWithTitle: "Show ⏸ icon when track is paused", target: nil, action: nil)
 
@@ -75,7 +77,18 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
         fontStackView.addArrangedSubview(fontSizeControl)
         mainStackView.addArrangedSubview(fontStackView)
 
-        // 3. Preferred Player
+        // 3. Highlight Color
+        let colorStackView = NSStackView()
+        colorStackView.orientation = .vertical
+        colorStackView.alignment = .leading
+        colorStackView.spacing = 4
+        let colorTitle = NSTextField(labelWithString: "Lyric Highlight Color:")
+        colorTitle.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        colorStackView.addArrangedSubview(colorTitle)
+        colorStackView.addArrangedSubview(colorControl)
+        mainStackView.addArrangedSubview(colorStackView)
+
+        // 4. Preferred Player
         let playerStackView = NSStackView()
         playerStackView.orientation = .vertical
         playerStackView.alignment = .leading
@@ -88,7 +101,7 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
         playerStackView.addArrangedSubview(playerPopUp)
         mainStackView.addArrangedSubview(playerStackView)
 
-        // 4. Pause Indicator Checkbox
+        // 5. Pause Indicator Checkbox
         mainStackView.addArrangedSubview(pauseIconCheckbox)
 
         // Target actions
@@ -98,13 +111,16 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
         fontSizeControl.target = self
         fontSizeControl.action = #selector(onFontSizeChanged)
 
+        colorControl.target = self
+        colorControl.action = #selector(onColorChanged)
+
         playerPopUp.target = self
         playerPopUp.action = #selector(onPlayerChanged)
 
         pauseIconCheckbox.target = self
         pauseIconCheckbox.action = #selector(onPauseCheckboxChanged)
 
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 360, height: 260))
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 360, height: 320))
         mainStackView.frame = container.bounds
         mainStackView.autoresizingMask = [.width, .height]
         container.addSubview(mainStackView)
@@ -129,6 +145,14 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
             fontSizeControl.selectedSegment = 2
         } else {
             fontSizeControl.selectedSegment = 1
+        }
+
+        let color = defaults.string(forKey: Self.keyHighlightColor) ?? "white"
+        switch color {
+        case "gold": colorControl.selectedSegment = 1
+        case "cyan": colorControl.selectedSegment = 2
+        case "green": colorControl.selectedSegment = 3
+        default: colorControl.selectedSegment = 0
         }
 
         let player = defaults.string(forKey: Self.keyPreferredPlayer) ?? "auto"
@@ -157,6 +181,17 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
         default: size = 11
         }
         UserDefaults.standard.set(size, forKey: Self.keyFontSize)
+    }
+
+    @objc private func onColorChanged() {
+        let color: String
+        switch colorControl.selectedSegment {
+        case 1: color = "gold"
+        case 2: color = "cyan"
+        case 3: color = "green"
+        default: color = "white"
+        }
+        UserDefaults.standard.set(color, forKey: Self.keyHighlightColor)
     }
 
     @objc private func onPlayerChanged() {
