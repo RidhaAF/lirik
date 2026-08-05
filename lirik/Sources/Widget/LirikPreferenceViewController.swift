@@ -15,6 +15,18 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
 
     static var nibName: NSNib.Name = NSNib.Name("LirikPreferenceViewController")
 
+    convenience init() {
+        self.init(nibName: nil, bundle: nil)
+    }
+
+    override init(nibName nibNameOrNil: NSNib.Name?, bundle nibBundleOrNil: Bundle?) {
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+    }
+
     // MARK: - UserDefault Keys
 
     static let keyDualLine = "io.github.ridhaaf.lirik.dualLine"

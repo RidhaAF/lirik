@@ -36,6 +36,7 @@ class LyricsWidget: NSObject, PKWidget {
     @objc var hasPreferencesView: Bool { return true }
     @objc var preferenceClass: PKWidgetPreference.Type? { return LirikPreferenceViewController.self }
     @objc var preferenceView: PKWidgetPreference? { return LirikPreferenceViewController() }
+    @objc var preferences: PKWidgetPreference? { return LirikPreferenceViewController() }
 
     // MARK: - UI Components
 

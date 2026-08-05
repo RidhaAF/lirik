@@ -50,5 +50,7 @@
 	<string>lirik.LirikWidget</string>
 	<key>PKWidgetAuthor</key>
 	<string>Ridha Ahmad Firdaus</string>
+	<key>PKWidgetPreferenceClass</key>
+	<string>lirik.LirikPreferenceViewController</string>
 </dict>
 </plist>

@@ -10,6 +10,8 @@
 	<string>BNDL</string>
 	<key>NSPrincipalClass</key>
 	<string>lirik.LirikWidget</string>
+	<key>PKWidgetPreferenceClass</key>
+	<string>lirik.LirikPreferenceViewController</string>
 	<key>PKWidgetAuthor</key>
 	<string>Ridha Ahmad Firdaus</string>
 	<key>NSAppleEventsUsageDescription</key>
