@@ -15,6 +15,7 @@
 //
 
 import Foundation
+import AppKit
 
 /// Polls Spotify and Apple Music via AppleScript to detect what's playing.
 final class AppleScriptBackend {

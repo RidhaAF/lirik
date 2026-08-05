@@ -49,7 +49,7 @@ enum LRCSyncEngine {
     /// - Returns: `LRCSyncSnapshot` containing current & upcoming lines and position state.
     static func resolve(elapsedTime: TimeInterval, lines: [LRCLine]) -> LRCSyncSnapshot {
         guard !lines.isEmpty else {
-            return LRCSSnapshot(
+            return LRCSyncSnapshot(
                 currentLine: nil,
                 currentIndex: nil,
                 upcomingLine: nil,

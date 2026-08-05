@@ -1,0 +1,27 @@
+PODS:
+  - PockKit (0.3.0):
+    - PockKit/3rd (= 0.3.0)
+    - PockKit/Sources (= 0.3.0)
+    - TinyConstraints
+  - PockKit/3rd (0.3.0):
+    - TinyConstraints
+  - PockKit/Sources (0.3.0):
+    - PockKit/3rd
+    - TinyConstraints
+  - TinyConstraints (4.0.2)
+
+DEPENDENCIES:
+  - PockKit
+
+SPEC REPOS:
+  trunk:
+    - PockKit
+    - TinyConstraints
+
+SPEC CHECKSUMS:
+  PockKit: 37eb602a2d8ac7a591a12b65ca7606b0032aba78
+  TinyConstraints: 7b7ccc0c485bb3bb47082138ff28bc33cd49897f
+
+PODFILE CHECKSUM: 4f8ef46b066d705f6cbf79089301676fdff2563e
+
+COCOAPODS: 1.16.2

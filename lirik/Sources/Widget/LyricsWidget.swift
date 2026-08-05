@@ -22,7 +22,7 @@ enum LyricsWidgetUIState: Equatable {
     case synced(title: String, artist: String, lines: [LRCLine])
 }
 
-final class LyricsWidget: NSObject, PKWidget {
+class LyricsWidget: NSObject, PKWidget {
 
     // MARK: - PKWidget Protocol Properties
 
@@ -98,7 +98,7 @@ final class LyricsWidget: NSObject, PKWidget {
 
         // Content stack view (vertical: text stack + stylus progress view)
         contentStackView.orientation = .vertical
-        contentStackView.alignment = .fill
+        contentStackView.alignment = .leading
         contentStackView.distribution = .fill
         contentStackView.spacing = 2
 

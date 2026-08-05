@@ -6,8 +6,15 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		3C6A1D685CF26828A8B1A4C5 /* Pods_lirik.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AF73F4783B94B79CD3B2A325 /* Pods_lirik.framework */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
+		2DF47671AA634BA54F6DBED9 /* Pods-lirik.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-lirik.debug.xcconfig"; path = "Target Support Files/Pods-lirik/Pods-lirik.debug.xcconfig"; sourceTree = "<group>"; };
+		AF73F4783B94B79CD3B2A325 /* Pods_lirik.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_lirik.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		DE8B9BE3302327A200535EE1 /* lirik.pock */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = lirik.pock; sourceTree = BUILT_PRODUCTS_DIR; };
+		F5884B04217158106AE19292 /* Pods-lirik.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-lirik.release.xcconfig"; path = "Target Support Files/Pods-lirik/Pods-lirik.release.xcconfig"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -36,17 +43,28 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				3C6A1D685CF26828A8B1A4C5 /* Pods_lirik.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		D391B69C6094A66E546E9824 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				AF73F4783B94B79CD3B2A325 /* Pods_lirik.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 		DE8B9BD9302327A200535EE1 = {
 			isa = PBXGroup;
 			children = (
 				DE8B9BE5302327A200535EE1 /* lirik */,
 				DE8B9BE4302327A200535EE1 /* Products */,
+				FD8E6DBD47C3A01897038799 /* Pods */,
+				D391B69C6094A66E546E9824 /* Frameworks */,
 			);
 			sourceTree = "<group>";
 		};
@@ -58,6 +76,15 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
+		FD8E6DBD47C3A01897038799 /* Pods */ = {
+			isa = PBXGroup;
+			children = (
+				2DF47671AA634BA54F6DBED9 /* Pods-lirik.debug.xcconfig */,
+				F5884B04217158106AE19292 /* Pods-lirik.release.xcconfig */,
+			);
+			path = Pods;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -65,6 +92,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = DE8B9BEC302327A200535EE1 /* Build configuration list for PBXNativeTarget "lirik" */;
 			buildPhases = (
+				083BF228D1790E28A58C09ED /* [CP] Check Pods Manifest.lock */,
 				DE8B9BDE302327A200535EE1 /* Sources */,
 				DE8B9BDF302327A200535EE1 /* Frameworks */,
 				DE8B9BE0302327A200535EE1 /* Resources */,
@@ -78,8 +106,6 @@
 				DE8B9BE5302327A200535EE1 /* lirik */,
 			);
 			name = lirik;
-			packageProductDependencies = (
-			);
 			productName = lirik;
 			productReference = DE8B9BE3302327A200535EE1 /* lirik.pock */;
 			productType = "com.apple.product-type.bundle";
@@ -129,6 +155,28 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
+		083BF228D1790E28A58C09ED /* [CP] Check Pods Manifest.lock */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"${PODS_PODFILE_DIR_PATH}/Podfile.lock",
+				"${PODS_ROOT}/Manifest.lock",
+			);
+			name = "[CP] Check Pods Manifest.lock";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/Pods-lirik-checkManifestLockResult.txt",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
+			showEnvVarsInLog = 0;
+		};
 		DE8B9BE1302327A200535EE1 /* [PK] Install widget */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
@@ -162,6 +210,7 @@
 /* Begin XCBuildConfiguration section */
 		DE8B9BED302327A200535EE1 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 2DF47671AA634BA54F6DBED9 /* Pods-lirik.debug.xcconfig */;
 			buildSettings = {
 				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
 				CODE_SIGN_STYLE = Automatic;
@@ -183,6 +232,7 @@
 		};
 		DE8B9BEE302327A200535EE1 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = F5884B04217158106AE19292 /* Pods-lirik.release.xcconfig */;
 			buildSettings = {
 				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
 				CODE_SIGN_STYLE = Automatic;
