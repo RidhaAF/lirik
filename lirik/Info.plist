@@ -8,5 +8,7 @@
 	<string>lirik.LirikWidget</string>
 	<key>PKWidgetAuthor</key>
 	<string>Ridha Ahmad Firdaus</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Lirik requires access to Spotify and Apple Music to display real-time lyrics on your Touch Bar.</string>
 </dict>
 </plist>

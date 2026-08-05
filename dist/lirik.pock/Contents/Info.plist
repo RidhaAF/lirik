@@ -42,6 +42,8 @@
 	<string>17C529</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>15.7</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Lirik requires access to Spotify and Apple Music to display real-time lyrics on your Touch Bar.</string>
 	<key>NSPrincipalClass</key>
 	<string>lirik.LirikWidget</string>
 	<key>PKWidgetAuthor</key>
