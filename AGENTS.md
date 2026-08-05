@@ -100,11 +100,16 @@ Rendering code (`Widget/`) should contain no networking or parsing logic — it 
 - **Automation permission: required on macOS 15.4+** where MediaRemote.framework is blocked by entitlement enforcement and AppleScript polling is the primary backend. macOS will prompt the user on first use for each target app (Spotify, Apple Music). Not required on older macOS where MediaRemote still works.
 - No network entitlement beyond standard outbound HTTPS to LRCLIB/Genius.
 
-## 11. Known Fragile Areas — Flag Before Changing
+## 11. Known Fragile Areas & Verified Environment
 
-- `MediaRemote.framework` symbol names are undocumented and can change across macOS versions. Document the macOS version(s) this was last verified against, in a comment near the `dlsym` calls.
+- **MediaRemote.framework API Blocked on macOS 15.4+**: `MRMediaRemoteGetNowPlayingInfo` symbols resolve via `dlsym`, but callbacks silently fail due to entitlement enforcement in `mediaremoted`. Dual-backend architecture uses `AppleScriptBackend` on macOS 15.4+ and `MediaRemoteBackend` on older macOS.
+- **Environment Verified Against**:
+  - **macOS**: `macOS 15.7.7` (Build `24G720`, Apple Silicon `arm64`)
+  - **Xcode**: `Xcode 26.3` (Build `17C529`)
+  - **Swift**: `Apple Swift version 6.2.4` (Effective Swift 5 mode)
+  - **PockKit**: `PockKit 0.3.0` via CocoaPods (`lirik.xcworkspace`)
 - Track matching (artist + title + duration against LRCLIB) is heuristic, not exact. If you touch matching logic, check it against a few known edge cases (live versions, remixes, features) before considering it done.
-- Pock's own PockKit API surface may change between Pock releases — pin against a known-working Pock version rather than assuming latest is safe.
+- Pock's own PockKit API surface may change between Pock releases — pinned against PockKit 0.3.0.
 
 ## 12. Explicitly Out of Scope (don't build these without updating PRD.md first)
 
