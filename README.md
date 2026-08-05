@@ -49,9 +49,9 @@
 
 #### 3. Enable Lirik on your Touch Bar
 1. Click the **Pock** icon in your macOS menu bar.
-2. Select **Preferences** $\rightarrow$ **Widgets Manager**.
+2. Select **Manage widgets...** (or **Preferences...**).
 3. Ensure **Lirik** is enabled (green indicator dot).
-4. Click **Customize Pock** to drag **Lirik** onto your physical Touch Bar layout.
+4. Click **Customize Pock...** to drag **Lirik** onto your physical Touch Bar layout.
 
 ---
 
@@ -76,7 +76,7 @@ When playing music for the first time:
 
 You can customize Lirik's layout, colors, alignment, and font size directly inside Pock:
 
-1. Open **Pock Preferences** $\rightarrow$ **Widgets Manager**.
+1. Click the **Pock** icon in your macOS menu bar $\rightarrow$ **Manage widgets...**
 2. Select **Lirik** in the left sidebar.
 3. Configure your preferred settings:
    - **Display Mode**: Select *2-Line Karaoke* or *1-Line Compact*.
