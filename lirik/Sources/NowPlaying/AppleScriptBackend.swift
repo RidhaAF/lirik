@@ -207,7 +207,9 @@ final class AppleScriptBackend {
             // -1728 = can't get current track (nothing playing)
             // These are expected, not worth logging as errors.
             let errorNumber = error[NSAppleScript.errorNumber] as? Int ?? 0
-            if errorNumber != -128 && errorNumber != -1728 {
+            if errorNumber == -1743 {
+                NSLog("[AppleScriptBackend] ⚠️ AUTOMATION PERMISSION DENIED (-1743). Please grant Pock permission to control Spotify/Music in System Settings -> Privacy & Security -> Automation.")
+            } else if errorNumber != -128 && errorNumber != -1728 {
                 NSLog("[AppleScriptBackend] Script error \(errorNumber): \(error[NSAppleScript.errorMessage] as? String ?? "unknown")")
             }
             return nil

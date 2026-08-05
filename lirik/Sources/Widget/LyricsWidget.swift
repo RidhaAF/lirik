@@ -71,6 +71,8 @@ class LyricsWidget: NSObject, PKWidget {
         super.init()
         setupUI()
         setupWatcherCallbacks()
+        // Ensure watcher starts watching immediately upon initialization
+        nowPlayingWatcher.startWatching()
     }
 
     // MARK: - PKWidget Lifecycle Hooks
@@ -90,32 +92,33 @@ class LyricsWidget: NSObject, PKWidget {
 
     private func setupUI() {
         // Container stack view (horizontal: content + minimal glyph controls)
+        // Zero top/bottom edgeInsets so PKButtons and text fill 30px without vertical clipping
         containerView.orientation = .horizontal
         containerView.alignment = .centerY
         containerView.distribution = .fill
-        containerView.spacing = 8
-        containerView.edgeInsets = NSEdgeInsets(top: 2, left: 8, bottom: 2, right: 8)
+        containerView.spacing = 6
+        containerView.edgeInsets = NSEdgeInsets(top: 0, left: 4, bottom: 0, right: 4)
 
         // Content stack view (vertical: text stack + stylus progress view)
         contentStackView.orientation = .vertical
         contentStackView.alignment = .leading
         contentStackView.distribution = .fill
-        contentStackView.spacing = 2
+        contentStackView.spacing = 1
 
         // Text stack view (vertical: current line + next line)
         textStackView.orientation = .vertical
         textStackView.alignment = .leading
         textStackView.distribution = .fillProportionally
-        textStackView.spacing = 1
+        textStackView.spacing = 0
 
-        // Current line label (bold / highlighted)
-        currentLineLabel.font = NSFont.boldSystemFont(ofSize: 12)
+        // Current line label (bold 11pt for Touch Bar 30px height)
+        currentLineLabel.font = NSFont.boldSystemFont(ofSize: 11)
         currentLineLabel.textColor = .labelColor
         currentLineLabel.lineBreakMode = .byTruncatingTail
         currentLineLabel.stringValue = "Lirik"
 
-        // Next line label (dimmed / secondary)
-        nextLineLabel.font = NSFont.systemFont(ofSize: 10)
+        // Next line label (dimmed 9pt for Touch Bar 30px height)
+        nextLineLabel.font = NSFont.systemFont(ofSize: 9)
         nextLineLabel.textColor = .secondaryLabelColor
         nextLineLabel.lineBreakMode = .byTruncatingTail
         nextLineLabel.stringValue = ""
@@ -123,8 +126,8 @@ class LyricsWidget: NSObject, PKWidget {
         textStackView.addArrangedSubview(currentLineLabel)
         textStackView.addArrangedSubview(nextLineLabel)
 
-        // Stylus progress view height (4px tape groove)
-        stylusProgressView.heightAnchor.constraint(equalToConstant: 4).isActive = true
+        // Stylus progress view height (2px tape groove for Touch Bar 30px height)
+        stylusProgressView.heightAnchor.constraint(equalToConstant: 2).isActive = true
 
         contentStackView.addArrangedSubview(textStackView)
         contentStackView.addArrangedSubview(stylusProgressView)
