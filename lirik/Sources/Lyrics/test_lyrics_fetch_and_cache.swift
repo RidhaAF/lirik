@@ -245,7 +245,7 @@ Task {
     let lrclibID: Int?
 
     switch result {
-    case .synced(let id, let lrcText, let _):
+    case .synced(let id, let lrcText, _):
         lrclibID = id
         print("  ✅ Synced LRC Lyrics Found (LRCLIB ID: \(id))")
         let parsedLines = LRCParser.parse(lrcText)
