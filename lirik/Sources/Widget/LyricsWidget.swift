@@ -39,9 +39,6 @@ class LyricsWidget: NSObject, PKWidget {
 
     private let currentLineLabel = NSTextField(labelWithString: "Lirik")
     private let nextLineLabel = NSTextField(labelWithString: "")
-    private let stylusProgressView = StylusProgressView()
-
-    private let refreshButton = PKButton(title: "↺", target: nil, action: nil)
 
     // MARK: - Logic Dependencies
 
@@ -91,14 +88,14 @@ class LyricsWidget: NSObject, PKWidget {
     // MARK: - UI Setup
 
     private func setupUI() {
-        // Container stack view (horizontal: content + refresh button)
+        // Container stack view (horizontal: pure content)
         containerView.orientation = .horizontal
         containerView.alignment = .centerY
         containerView.distribution = .fill
-        containerView.spacing = 6
+        containerView.spacing = 0
         containerView.edgeInsets = NSEdgeInsets(top: 0, left: 4, bottom: 0, right: 4)
 
-        // Content stack view (vertical: text stack + stylus progress view)
+        // Content stack view (vertical: text stack)
         contentStackView.orientation = .vertical
         contentStackView.alignment = .leading
         contentStackView.distribution = .fill
@@ -125,25 +122,9 @@ class LyricsWidget: NSObject, PKWidget {
         textStackView.addArrangedSubview(currentLineLabel)
         textStackView.addArrangedSubview(nextLineLabel)
 
-        // Stylus progress view height (2px tape groove for Touch Bar 30px height)
-        stylusProgressView.heightAnchor.constraint(equalToConstant: 2).isActive = true
-
         contentStackView.addArrangedSubview(textStackView)
-        contentStackView.addArrangedSubview(stylusProgressView)
-
-        // Configure Refresh Button (vector SF Symbol for zero character baseline clipping)
-        if let refreshImg = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "Refresh") {
-            refreshButton.image = refreshImg
-            refreshButton.title = ""
-        } else {
-            refreshButton.title = "↻"
-        }
-        refreshButton.target = self
-        refreshButton.action = #selector(handleRefresh)
-        refreshButton.widthAnchor.constraint(equalToConstant: 24).isActive = true
 
         containerView.addArrangedSubview(contentStackView)
-        containerView.addArrangedSubview(refreshButton)
 
         self.view = containerView
     }
@@ -176,7 +157,7 @@ class LyricsWidget: NSObject, PKWidget {
             }
         }
 
-        // Handle elapsed time ticks for synced lyrics & progress bar
+        // Handle elapsed time ticks for synced lyrics
         nowPlayingWatcher.onElapsedTimeUpdate = { [weak self] elapsed in
             guard let self else { return }
 
@@ -184,11 +165,6 @@ class LyricsWidget: NSObject, PKWidget {
 
             DispatchQueue.main.async {
                 self.isCurrentlyPaused = !track.isPlaying
-                self.stylusProgressView.isPaused = !track.isPlaying
-
-                if let duration = track.duration, duration > 0 {
-                    self.stylusProgressView.progress = elapsed / duration
-                }
 
                 // If track is paused, freeze line scroll animations
                 if case .synced(_, _, let lines) = self.uiState {
@@ -302,13 +278,11 @@ class LyricsWidget: NSObject, PKWidget {
             currentLineLabel.stringValue = "Lirik"
             currentLineLabel.textColor = .secondaryLabelColor
             nextLineLabel.stringValue = "No track playing"
-            stylusProgressView.progress = 0.0
 
         case .permissionDenied(let appName):
             currentLineLabel.stringValue = "Permission Required"
             currentLineLabel.textColor = .systemRed
             nextLineLabel.stringValue = "Allow Pock -> \(appName) in System Settings"
-            stylusProgressView.progress = 0.0
 
         case .loading:
             currentLineLabel.stringValue = "Fetching lyrics..."
@@ -347,11 +321,9 @@ class LyricsWidget: NSObject, PKWidget {
             break
 
         case .beforeFirstLine:
-            if let upcoming = snapshot.upcomingLine {
-                currentLineLabel.stringValue = "\(prefix)♪ Intro"
-                currentLineLabel.textColor = .secondaryLabelColor
-                nextLineLabel.stringValue = upcoming.text
-            }
+            currentLineLabel.textColor = isPaused ? .secondaryLabelColor : .labelColor
+            currentLineLabel.stringValue = "\(prefix)\(snapshot.upcomingLine?.text ?? "")"
+            nextLineLabel.stringValue = activeLines.count > 1 ? activeLines[1].text : ""
 
         case .inLyrics:
             currentLineLabel.textColor = isPaused ? .secondaryLabelColor : .labelColor
@@ -364,16 +336,7 @@ class LyricsWidget: NSObject, PKWidget {
         case .afterLastLine:
             currentLineLabel.textColor = isPaused ? .secondaryLabelColor : .labelColor
             currentLineLabel.stringValue = "\(prefix)\(snapshot.currentLine?.text ?? "")"
-            nextLineLabel.stringValue = "♪ Outro"
+            nextLineLabel.stringValue = ""
         }
-    }
-
-    // MARK: - Button Actions
-
-    @objc private func handleRefresh() {
-        NSLog("[LyricsWidget] Refresh tapped — forcing LRCLIB re-fetch")
-        guard let track = nowPlayingWatcher.currentTrack else { return }
-        let key = LyricsCache.makeTrackKey(title: track.title, artist: track.artist, duration: track.duration)
-        loadLyrics(for: track, expectedKey: key, forceRefresh: true)
     }
 }

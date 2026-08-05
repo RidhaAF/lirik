@@ -159,8 +159,10 @@ final class AppleScriptBackend {
         let title = parts[0].trimmingCharacters(in: .whitespaces)
         let artist = parts[1].trimmingCharacters(in: .whitespaces)
         let album = parts[2].trimmingCharacters(in: .whitespaces)
-        let duration = TimeInterval(parts[3].trimmingCharacters(in: .whitespaces))
-        let elapsed = TimeInterval(parts[4].trimmingCharacters(in: .whitespaces))
+        let durationStr = parts[3].trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: ".")
+        let elapsedStr = parts[4].trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: ".")
+        let duration = TimeInterval(durationStr)
+        let elapsed = TimeInterval(elapsedStr)
         let stateStr = parts[5].trimmingCharacters(in: .whitespaces).lowercased()
 
         guard !title.isEmpty else { return nil }
@@ -201,8 +203,10 @@ final class AppleScriptBackend {
         let title = parts[0].trimmingCharacters(in: .whitespaces)
         let artist = parts[1].trimmingCharacters(in: .whitespaces)
         let album = parts[2].trimmingCharacters(in: .whitespaces)
-        let duration = TimeInterval(parts[3].trimmingCharacters(in: .whitespaces))
-        let elapsed = TimeInterval(parts[4].trimmingCharacters(in: .whitespaces))
+        let durationStr = parts[3].trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: ".")
+        let elapsedStr = parts[4].trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: ".")
+        let duration = TimeInterval(durationStr)
+        let elapsed = TimeInterval(elapsedStr)
         let stateStr = parts[5].trimmingCharacters(in: .whitespaces).lowercased()
 
         guard !title.isEmpty else { return nil }
