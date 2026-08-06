@@ -49,6 +49,8 @@ Run this single command in **Terminal** before opening the widget:
 xattr -cr ~/Downloads/lirik.pock
 ```
 
+![Clear macOS Quarantine in Terminal](assets/terminal-xattr.png)
+
 #### 3. Install into Pock
 - **Double-click `lirik.pock`** to install automatically in Pock.
 - *(Alternative Manual Copy)*: Move `lirik.pock` directly into your Widgets folder:
