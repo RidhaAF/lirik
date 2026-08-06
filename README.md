@@ -37,17 +37,26 @@
 ### Step-by-Step Installation Guide
 
 #### 1. Download the Widget
-- Download the latest **`lirik.pock.zip`** from [GitHub Releases](https://github.com/RidhaAF/lirik/releases).
+- Download the latest **`lirik.zip`** from [GitHub Releases](https://github.com/RidhaAF/lirik/releases).
 
-#### 2. Install into Pock
-- Unzip `lirik.pock.zip` to get `lirik.pock`.
-- **Double-click `lirik.pock`** to open and install it automatically in Pock.
-- *(Alternative)*: Move `lirik.pock` directly into your Widgets folder:
+#### 2. Clear macOS Quarantine (Crucial)
+To prevent macOS Gatekeeper from showing **"lirik.pock is damaged and can't be opened"** or Pock's **`error.invalid-bundle`**:
+
+![lirik.pock is damaged error](assets/damaged-error.png)
+
+Run this single command in **Terminal** before opening the widget:
+```bash
+xattr -cr ~/Downloads/lirik.pock
+```
+
+#### 3. Install into Pock
+- **Double-click `lirik.pock`** to install automatically in Pock.
+- *(Alternative Manual Copy)*: Move `lirik.pock` directly into your Widgets folder:
   ```bash
-  ~/Library/Application Support/Pock/Widgets/
+  cp -R ~/Downloads/lirik.pock ~/Library/Application\ Support/Pock/Widgets/
   ```
 
-#### 3. Enable Lirik on your Touch Bar
+#### 4. Enable Lirik on your Touch Bar
 1. Click the **Pock** icon in your macOS menu bar.
 2. Select **Manage widgets...** (or **Preferences...**).
 3. Ensure **Lirik** is enabled (green indicator dot).
@@ -61,11 +70,14 @@ When playing music for the first time:
 
 1. Open **Spotify** or **Apple Music** and start playing a track.
 2. macOS will present a system authorization popup:
-   > **"Pock.app" wants access to control "Spotify.app"** $\rightarrow$ Click **Allow**.
+
+   ![Pock Automation Permission Prompt](assets/permission-prompt.png)
+
+   Click **Allow**.
 3. If the popup does not appear or permission was previously denied:
    - Go to **System Settings** $\rightarrow$ **Privacy & Security** $\rightarrow$ **Automation**.
    - Find **Pock** and toggle **Spotify** (and **Music**) to **ON**.
-   - Or run this command in Terminal to reset prompts:
+   - Or run this command in **Terminal** to reset system permission prompts, then quit and reopen **Pock** and **Spotify** / **Apple Music**:
      ```bash
      tccutil reset AppleEvents
      ```
