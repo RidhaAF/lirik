@@ -13,10 +13,18 @@
 //  Requires macOS Automation permission — the system will prompt
 //  the user on first use for each target app.
 //
+//  Permission strategy:
+//  - NSAppleScript (in-process) for regular 1s polling (fast, lightweight).
+//  - When -1743 is first hit, spawn a ONE-TIME `/usr/bin/osascript` subprocess
+//    to trigger the TCC permission dialog. The subprocess runs outside Pock's
+//    process tree, so the dialog appears regardless of how Pock was launched
+//    (Spotlight, Terminal, etc.).
+//  - After the dialog is resolved (Allow or Deny), NSAppleScript resumes
+//    regular polling.
+//
 
 import Foundation
 import AppKit
-import CoreServices
 
 /// Polls Spotify and Apple Music via AppleScript to detect what's playing.
 final class AppleScriptBackend {
@@ -34,25 +42,20 @@ final class AppleScriptBackend {
     /// Callback fired when macOS blocks AppleScript with error -1743 (Automation Permission Denied)
     var onPermissionDenied: ((String) -> Void)?
 
-    // MARK: - Automation Permission Prompt Trigger
+    // MARK: - Permission retry tracking
 
-    /// Requests macOS Automation permission for the target application bundle identifier.
-    /// Calling this on the main thread causes macOS to present the system authorization alert:
-    /// "[App] would like to control [TargetApp]. [Don't Allow] [OK]"
-    @discardableResult
-    static func requestAutomationPermission(for bundleID: String) -> OSStatus {
-        var address = AEAddressDesc()
-        let data = bundleID.data(using: .utf8)!
-        let status = data.withUnsafeBytes { ptr -> OSStatus in
-            guard let base = ptr.baseAddress else { return OSStatus(errAEEventNotPermitted) }
-            return OSStatus(AECreateDesc(typeApplicationBundleID, base, data.count, &address))
-        }
-        guard status == noErr else { return status }
+    /// How many consecutive -1743 errors we've seen per app.
+    /// Reset to 0 on any successful query for that app.
+    private var consecutiveDenials: [String: Int] = [:]
 
-        let result = AEDeterminePermissionToAutomateTarget(&address, typeWildCard, typeWildCard, true)
-        AEDisposeDesc(&address)
-        return result
-    }
+    /// Maximum consecutive -1743 errors before we give up and
+    /// show the "Permission Required" UI. With 1s polling, this
+    /// gives the user ~8 seconds to respond to the dialog.
+    private let maxConsecutiveDenialsBeforeAlert = 8
+
+    /// Tracks which apps we've already spawned a subprocess for.
+    /// Only one subprocess per app per session — avoids spamming.
+    private var subprocessTriggered: Set<String> = []
 
     // MARK: - Public API
 
@@ -71,18 +74,16 @@ final class AppleScriptBackend {
     func startPolling(onUpdate: @escaping (NowPlayingTrack?) -> Void) {
         self.onUpdate = onUpdate
 
-        // Prompt for permissions upfront on main thread if needed
-        if isAppRunning(bundleIdentifier: "com.spotify.client") {
-            Self.requestAutomationPermission(for: "com.spotify.client")
-        }
-        if isAppRunning(bundleIdentifier: "com.apple.Music") {
-            Self.requestAutomationPermission(for: "com.apple.Music")
-        }
+        // Reset state on fresh start
+        consecutiveDenials.removeAll()
+        subprocessTriggered.removeAll()
 
-        // Fire immediately, then repeat on interval
+        // Fire immediately. NSAppleScript does regular in-process polling.
+        // If permission isn't granted yet, the first -1743 will trigger
+        // a one-time subprocess to show the system dialog.
         DispatchQueue.main.async { [weak self] in
             let track = self?.queryNowPlaying()
-            onUpdate(track)
+            self?.onUpdate?(track)
         }
 
         pollTimer = Timer.scheduledTimer(
@@ -135,8 +136,6 @@ final class AppleScriptBackend {
     // MARK: - Spotify
 
     private func querySpotify() -> NowPlayingTrack? {
-        // Single compound query to minimize AppleScript round-trips.
-        // Returns a record with all fields we need in one call.
         let script = """
         tell application "Spotify"
             if player state is stopped then return "|||STOPPED|||"
@@ -226,6 +225,14 @@ final class AppleScriptBackend {
 
     /// Executes an AppleScript string on main thread and returns the result as a
     /// trimmed string, or nil on error.
+    ///
+    /// Error -1743 strategy:
+    /// 1. On first -1743 for an app → spawn `/usr/bin/osascript` subprocess to
+    ///    trigger the TCC permission dialog (works even when Pock is launched
+    ///    from Spotlight, unlike in-process NSAppleScript).
+    /// 2. Continue polling with NSAppleScript.
+    /// 3. If consecutive denials reach threshold → fire `onPermissionDenied`.
+    /// 4. If any query succeeds → reset counter + mark as resolved.
     private func runAppleScript(_ source: String, appName: String) -> String? {
         let appleScript = NSAppleScript(source: source)
         var errorInfo: NSDictionary?
@@ -234,16 +241,84 @@ final class AppleScriptBackend {
         if let error = errorInfo {
             let errorNumber = error[NSAppleScript.errorNumber] as? Int ?? 0
             if errorNumber == -1743 {
-                NSLog("[AppleScriptBackend] ⚠️ AUTOMATION PERMISSION DENIED (-1743) for \(appName). Grant Pock permission in System Settings -> Privacy & Security -> Automation.")
-                DispatchQueue.main.async { [weak self] in
-                    self?.onPermissionDenied?(appName)
+                let current = consecutiveDenials[appName] ?? 0
+                let next = current + 1
+                consecutiveDenials[appName] = next
+
+                // On first denial, spawn a subprocess to trigger the TCC dialog.
+                // The subprocess (/usr/bin/osascript) runs OUTSIDE Pock's process
+                // tree, so macOS presents the dialog regardless of launch method.
+                if next == 1 && !subprocessTriggered.contains(appName) {
+                    subprocessTriggered.insert(appName)
+                    triggerDialogViaSubprocess(for: appName)
+                }
+
+                if next < maxConsecutiveDenialsBeforeAlert {
+                    NSLog("[AppleScriptBackend] Permission denied (-1743) for \(appName) — retry \(next)/\(maxConsecutiveDenialsBeforeAlert)")
+                } else if next == maxConsecutiveDenialsBeforeAlert {
+                    NSLog("[AppleScriptBackend] ⚠️ PERSISTENT DENIAL for \(appName) after \(next) attempts. User must enable Pock → \(appName) in System Settings → Privacy & Security → Automation.")
+                    DispatchQueue.main.async { [weak self] in
+                        self?.onPermissionDenied?(appName)
+                    }
                 }
             } else if errorNumber != -128 && errorNumber != -1728 {
+                // -128 = user cancelled, -1728 = app not running — both benign
                 NSLog("[AppleScriptBackend] Script error \(errorNumber): \(error[NSAppleScript.errorMessage] as? String ?? "unknown")")
             }
             return nil
         }
 
+        // Script succeeded — permission is granted. Reset everything.
+        if consecutiveDenials[appName] != nil {
+            NSLog("[AppleScriptBackend] Permission resolved for \(appName) — resetting")
+            consecutiveDenials.removeValue(forKey: appName)
+            subprocessTriggered.remove(appName)
+        }
+
         return result?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    // MARK: - Subprocess dialog trigger
+
+    /// Spawns `/usr/bin/osascript` as a subprocess to trigger the macOS
+    /// Automation permission dialog. This subprocess runs independently
+    /// of Pock, so the TCC dialog appears even when Pock was launched
+    /// from Spotlight (where in-process AppleEvents can't trigger it).
+    ///
+    /// We use a lightweight script that just asks for the player state —
+    /// enough to trigger the dialog without heavy overhead.
+    /// The subprocess is fire-and-forget; we don't need its result.
+    private func triggerDialogViaSubprocess(for appName: String) {
+        let script: String
+        if appName == "Spotify" {
+            script = "tell application \"Spotify\" to get player state"
+        } else {
+            script = "tell application \"Music\" to get player state"
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = ["-e", script]
+
+        // Discard output — we only care about the side effect (triggering dialog)
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+
+        // Run on a background thread to avoid blocking the main thread
+        // while the dialog is showing.
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                try process.run()
+                process.waitUntilExit()
+                let exitCode = process.terminationStatus
+                if exitCode == 0 {
+                    NSLog("[AppleScriptBackend] Subprocess dialog trigger for \(appName) succeeded — permission granted")
+                } else {
+                    NSLog("[AppleScriptBackend] Subprocess dialog trigger for \(appName) exited with code \(exitCode) (user may have denied)")
+                }
+            } catch {
+                NSLog("[AppleScriptBackend] Failed to spawn subprocess for \(appName): \(error.localizedDescription)")
+            }
+        }
     }
 }

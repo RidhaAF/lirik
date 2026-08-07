@@ -76,11 +76,24 @@ class LyricsWidget: NSObject, PKWidget {
     private let currentLineLabel = NSTextField(labelWithString: "Lirik")
     private let nextLineLabel = NSTextField(labelWithString: "")
 
+    /// Album cover art thumbnail (configurable size, rounded corners)
+    private let albumArtImageView = NSImageView()
+    private var albumArtWidthConstraint: NSLayoutConstraint?
+    private var albumArtHeightConstraint: NSLayoutConstraint?
+
+    /// Previous current-line text, used to detect changes for fade animation.
+    private var previousCurrentLineText: String = ""
+
+    /// Track info display: shows "Artist — Title" briefly when track changes.
+    /// nil if not showing. Set to Date() + 3s on track change.
+    private var trackInfoVisibleUntil: Date?
+
     // MARK: - Logic Dependencies
 
     private let nowPlayingWatcher = NowPlayingWatcher()
     private let lrclibClient = LRCLIBClient()
     private let lyricsCache = LyricsCache()
+    private let albumArtService = AlbumArtService()
 
     // MARK: - Widget State & Race Condition Fencing
 
@@ -124,12 +137,25 @@ class LyricsWidget: NSObject, PKWidget {
     // MARK: - UI Setup
 
     private func setupUI() {
-        // Container stack view (horizontal: pure content)
+        // Album art image view (24x24, rounded corners, left of text)
+        albumArtImageView.imageScaling = .scaleProportionallyUpOrDown
+        albumArtImageView.wantsLayer = true
+        albumArtImageView.layer?.cornerRadius = 4
+        albumArtImageView.layer?.masksToBounds = true
+        albumArtImageView.setContentHuggingPriority(.required, for: .horizontal)
+        albumArtImageView.setContentCompressionResistancePriority(.required, for: .horizontal)
+        albumArtWidthConstraint = albumArtImageView.widthAnchor.constraint(equalToConstant: 24)
+        albumArtHeightConstraint = albumArtImageView.heightAnchor.constraint(equalToConstant: 24)
+        albumArtWidthConstraint?.isActive = true
+        albumArtHeightConstraint?.isActive = true
+        albumArtImageView.isHidden = true // Hidden until artwork loads
+
+        // Container stack view (horizontal: album art + text)
         containerView.orientation = .horizontal
         containerView.alignment = .centerY
         containerView.distribution = .fill
-        containerView.spacing = 0
-        containerView.edgeInsets = NSEdgeInsets(top: 0, left: 4, bottom: 0, right: 4)
+        containerView.spacing = 4
+        containerView.edgeInsets = NSEdgeInsets(top: 0, left: 2, bottom: 0, right: 4)
 
         // Content stack view (vertical: text stack)
         contentStackView.orientation = .vertical
@@ -148,9 +174,11 @@ class LyricsWidget: NSObject, PKWidget {
         currentLineLabel.textColor = .labelColor
         currentLineLabel.lineBreakMode = .byTruncatingTail
         currentLineLabel.stringValue = "Lirik"
+        currentLineLabel.wantsLayer = true
 
         // Next line label (dimmed 9pt for Touch Bar karaoke secondary line)
         nextLineLabel.font = NSFont.systemFont(ofSize: 9)
+        nextLineLabel.wantsLayer = true
         nextLineLabel.textColor = .secondaryLabelColor
         nextLineLabel.lineBreakMode = .byTruncatingTail
         nextLineLabel.stringValue = ""
@@ -176,7 +204,12 @@ class LyricsWidget: NSObject, PKWidget {
             contentStackView.bottomAnchor.constraint(equalTo: tapButton.bottomAnchor)
         ])
 
+        containerView.addArrangedSubview(albumArtImageView)
         containerView.addArrangedSubview(tapButton)
+
+        // Prevent widget from resizing when lyrics change length
+        containerView.translatesAutoresizingMaskIntoConstraints = false
+        containerView.widthAnchor.constraint(greaterThanOrEqualToConstant: 280).isActive = true
 
         self.view = containerView
     }
@@ -225,7 +258,15 @@ class LyricsWidget: NSObject, PKWidget {
                 self.isCurrentlyPaused = !track.isPlaying
                 let newKey = LyricsCache.makeTrackKey(title: track.title, artist: track.artist, duration: track.duration)
                 self.activeTrackKey = newKey
+
+                // Show track info briefly if enabled
+                let defaults = UserDefaults.standard
+                if defaults.object(forKey: LirikPreferenceViewController.keyShowTrackInfo) as? Bool ?? true {
+                    self.trackInfoVisibleUntil = Date().addingTimeInterval(3.0)
+                }
+
                 self.loadLyrics(for: track, expectedKey: newKey, forceRefresh: false)
+                self.fetchAlbumArt(for: track)
             } else {
                 self.activeTrackKey = ""
                 self.activeLines = []
@@ -356,11 +397,13 @@ class LyricsWidget: NSObject, PKWidget {
             currentLineLabel.stringValue = "Lirik"
             currentLineLabel.textColor = .secondaryLabelColor
             nextLineLabel.stringValue = "No track playing"
+            albumArtImageView.isHidden = true
 
         case .permissionDenied(let appName):
             currentLineLabel.stringValue = "Permission Required"
             currentLineLabel.textColor = .systemRed
             nextLineLabel.stringValue = "Allow Pock -> \(appName) in System Settings"
+            albumArtImageView.isHidden = true
 
         case .loading:
             currentLineLabel.stringValue = "Fetching lyrics..."
@@ -430,6 +473,16 @@ class LyricsWidget: NSObject, PKWidget {
     }
 
     private func renderStaticLyrics(_ text: String, elapsed: TimeInterval, trackDuration: TimeInterval?, isPaused: Bool) {
+        // If track info is still visible, show it instead of lyrics
+        if let trackInfo = trackInfoText() {
+            currentLineLabel.stringValue = trackInfo
+            currentLineLabel.textColor = resolveHighlightColor(isPaused: false)
+            currentLineLabel.font = NSFont.boldSystemFont(ofSize: 11)
+            nextLineLabel.stringValue = ""
+            nextLineLabel.isHidden = true
+            return
+        }
+
         let defaults = UserDefaults.standard
         let dualLine = defaults.object(forKey: LirikPreferenceViewController.keyDualLine) as? Bool ?? true
         let fontSize = defaults.object(forKey: LirikPreferenceViewController.keyFontSize) as? Int ?? 11
@@ -456,13 +509,27 @@ class LyricsWidget: NSObject, PKWidget {
         let currentIndex = min(lines.count - 1, max(0, Int(elapsed / lineDuration)))
         let nextIndex = currentIndex + 1 < lines.count ? currentIndex + 1 : nil
 
+        applyAlbumArtSize()
+
         let prefix = (isPaused && showPauseIcon) ? "⏸ " : ""
+        let newText = "\(prefix)\(formatLineText(lines[currentIndex]))"
         currentLineLabel.textColor = resolveHighlightColor(isPaused: isPaused)
-        currentLineLabel.stringValue = "\(prefix)\(formatLineText(lines[currentIndex]))"
+        setLineText(currentLineLabel, newText)
+        previousCurrentLineText = newText
         nextLineLabel.stringValue = nextIndex != nil ? lines[nextIndex!] : ""
     }
 
     private func renderSyncSnapshot(_ snapshot: LRCSyncSnapshot, isPaused: Bool) {
+        // If track info is still visible, show it instead of lyrics
+        if let trackInfo = trackInfoText() {
+            currentLineLabel.textColor = resolveHighlightColor(isPaused: false)
+            currentLineLabel.font = NSFont.boldSystemFont(ofSize: 11)
+            currentLineLabel.stringValue = trackInfo
+            nextLineLabel.stringValue = ""
+            nextLineLabel.isHidden = true
+            return
+        }
+
         let defaults = UserDefaults.standard
         let dualLine = defaults.object(forKey: LirikPreferenceViewController.keyDualLine) as? Bool ?? true
         let fontSize = defaults.object(forKey: LirikPreferenceViewController.keyFontSize) as? Int ?? 11
@@ -473,30 +540,106 @@ class LyricsWidget: NSObject, PKWidget {
         nextLineLabel.font = NSFont.systemFont(ofSize: CGFloat(max(8, fontSize - 2)))
         nextLineLabel.isHidden = !dualLine
 
+        applyAlbumArtSize()
+
         let prefix = (isPaused && showPauseIcon) ? "⏸ " : ""
         let activeColor = resolveHighlightColor(isPaused: isPaused)
+        currentLineLabel.textColor = activeColor
+
+        let newText: String
+        let upcoming: String
 
         switch snapshot.positionState {
         case .empty:
-            break
-
+            newText = ""
+            upcoming = ""
         case .beforeFirstLine:
-            currentLineLabel.textColor = activeColor
-            currentLineLabel.stringValue = "\(prefix)\(formatLineText(snapshot.upcomingLine?.text ?? ""))"
-            nextLineLabel.stringValue = activeLines.count > 1 ? activeLines[1].text : ""
-
+            newText = "\(prefix)\(formatLineText(snapshot.upcomingLine?.text ?? ""))"
+            upcoming = activeLines.count > 1 ? activeLines[1].text : ""
         case .inLyrics:
-            currentLineLabel.textColor = activeColor
             let text = snapshot.currentLine?.text.isEmpty == true
                 ? "♪ (instrumental)"
                 : snapshot.currentLine?.text ?? ""
-            currentLineLabel.stringValue = "\(prefix)\(formatLineText(text))"
-            nextLineLabel.stringValue = snapshot.upcomingLine?.text ?? ""
-
+            newText = "\(prefix)\(formatLineText(text))"
+            upcoming = snapshot.upcomingLine?.text ?? ""
         case .afterLastLine:
-            currentLineLabel.textColor = activeColor
-            currentLineLabel.stringValue = "\(prefix)\(formatLineText(snapshot.currentLine?.text ?? ""))"
-            nextLineLabel.stringValue = ""
+            newText = "\(prefix)\(formatLineText(snapshot.currentLine?.text ?? ""))"
+            upcoming = ""
         }
+
+        setLineText(currentLineLabel, newText)
+        previousCurrentLineText = newText
+        nextLineLabel.stringValue = upcoming
+    }
+
+    // MARK: - Album Art Fetching
+
+    /// Fetches album artwork for the given track and displays it in the thumbnail.
+    /// Skips fetch if the "Show album artwork" preference is disabled.
+    private func fetchAlbumArt(for track: NowPlayingTrack) {
+        let defaults = UserDefaults.standard
+        let showArt = defaults.object(forKey: LirikPreferenceViewController.keyShowAlbumArt) as? Bool ?? true
+        guard showArt else {
+            DispatchQueue.main.async { [weak self] in
+                self?.albumArtImageView.isHidden = true
+            }
+            return
+        }
+
+        // Apply dynamic size from preferences
+        applyAlbumArtSize()
+
+        Task { [weak self] in
+            guard let self else { return }
+
+            let image = await self.albumArtService.fetchArtwork(
+                artist: track.artist,
+                album: track.album
+            )
+
+            // Guard against stale results (track may have changed during fetch)
+            guard self.nowPlayingWatcher.currentTrack?.isSameTrack(as: track) == true else {
+                return
+            }
+
+            DispatchQueue.main.async {
+                if let image = image {
+                    self.albumArtImageView.image = image
+                    self.albumArtImageView.isHidden = false
+                } else {
+                    // No artwork found — show a music note placeholder
+                    let placeholder = NSImage(
+                        systemSymbolName: "music.note",
+                        accessibilityDescription: "Album Art"
+                    )
+                    self.albumArtImageView.image = placeholder
+                    self.albumArtImageView.isHidden = false
+                }
+            }
+        }
+    }
+
+    /// Updates the album art image view size from UserDefaults preference.
+    /// Only changes constraint constants — does not create new constraints.
+    private func applyAlbumArtSize() {
+        let sizeIndex = UserDefaults.standard.object(forKey: LirikPreferenceViewController.keyAlbumArtSize) as? Int ?? 1
+        let sizes: [CGFloat] = [20, 24, 28]
+        let size = sizes[max(0, min(sizeIndex, sizes.count - 1))]
+        albumArtWidthConstraint?.constant = size
+        albumArtHeightConstraint?.constant = size
+    }
+
+    /// No animation on Touch Bar — Pock's DFR rendering pipeline
+    /// doesn't animate NSTextField smoothly. The 2-line karaoke mode
+    /// provides natural visual continuity by previewing the next line.
+    private func setLineText(_ label: NSTextField, _ text: String) {
+        label.stringValue = text
+    }
+
+    /// Returns the track info line (Artist — Title) or nil if track info display is not active.
+    private func trackInfoText() -> String? {
+        guard let until = trackInfoVisibleUntil, Date() < until,
+              let track = nowPlayingWatcher.currentTrack else { return nil }
+        return "\(track.artist) — \(track.title)"
     }
 }
