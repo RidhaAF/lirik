@@ -43,7 +43,7 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
     // MARK: - UI Controls
 
     private let dualLineControl = NSSegmentedControl(labels: ["2-Line Karaoke", "1-Line Compact"], trackingMode: .selectOne, target: nil, action: nil)
-    private let fontSizeControl = NSSegmentedControl(labels: ["Small (10pt)", "Medium (11pt)", "Large (12pt)"], trackingMode: .selectOne, target: nil, action: nil)
+    private let fontSizeControl = NSSegmentedControl(labels: ["Small", "Medium", "Large"], trackingMode: .selectOne, target: nil, action: nil)
     private let colorControl = NSSegmentedControl(labels: ["White", "Gold", "Cyan", "Green", "Purple", "Pink", "Orange", "Red"], trackingMode: .selectOne, target: nil, action: nil)
     private let alignmentControl = NSSegmentedControl(labels: ["Left Aligned", "Center Aligned"], trackingMode: .selectOne, target: nil, action: nil)
     private let playerPopUp = NSPopUpButton()
@@ -51,7 +51,7 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
     private let marqueeCheckbox = NSButton(checkboxWithTitle: "Enable marquee scrolling for long lyric lines", target: nil, action: nil)
     private let albumArtCheckbox = NSButton(checkboxWithTitle: "Show album artwork thumbnail", target: nil, action: nil)
     private let albumArtSizeControl = NSSegmentedControl(labels: ["Small", "Medium", "Large"], trackingMode: .selectOne, target: nil, action: nil)
-    private let trackInfoCheckbox = NSButton(checkboxWithTitle: "Show Artist — Title when track changes", target: nil, action: nil)
+    private let trackInfoCheckbox = NSButton(checkboxWithTitle: "Show song title & artist when track changes", target: nil, action: nil)
     private let clearCacheButton = NSButton(title: "Clear Cached Lyrics", target: nil, action: nil)
     private let cacheStatusLabel = NSTextField(labelWithString: "")
 
@@ -122,7 +122,7 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
         playerTitle.font = NSFont.systemFont(ofSize: 12, weight: .medium)
         playerStackView.addArrangedSubview(playerTitle)
 
-        playerPopUp.addItems(withTitles: ["Auto-detect (Spotify priority)", "Spotify Only", "Apple Music Only"])
+        playerPopUp.addItems(withTitles: ["Auto-detect", "Spotify Only", "Apple Music Only"])
         playerStackView.addArrangedSubview(playerPopUp)
         mainStackView.addArrangedSubview(playerStackView)
 
@@ -136,7 +136,7 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
         artSizeStackView.orientation = .vertical
         artSizeStackView.alignment = .leading
         artSizeStackView.spacing = 4
-        let artSizeTitle = NSTextField(labelWithString: "Album Art Size:")
+        let artSizeTitle = NSTextField(labelWithString: "Album Artwork Size:")
         artSizeTitle.font = NSFont.systemFont(ofSize: 12, weight: .medium)
         artSizeStackView.addArrangedSubview(artSizeTitle)
         artSizeStackView.addArrangedSubview(albumArtSizeControl)
@@ -243,16 +243,16 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
         let showPause = defaults.object(forKey: Self.keyShowPauseIcon) as? Bool ?? true
         pauseIconCheckbox.state = showPause ? .on : .off
 
-        let marquee = defaults.object(forKey: Self.keyEnableMarquee) as? Bool ?? true
+        let marquee = defaults.object(forKey: Self.keyEnableMarquee) as? Bool ?? false
         marqueeCheckbox.state = marquee ? .on : .off
 
-        let showArt = defaults.object(forKey: Self.keyShowAlbumArt) as? Bool ?? true
+        let showArt = defaults.object(forKey: Self.keyShowAlbumArt) as? Bool ?? false
         albumArtCheckbox.state = showArt ? .on : .off
 
         let artSize = defaults.object(forKey: Self.keyAlbumArtSize) as? Int ?? 1
         albumArtSizeControl.selectedSegment = artSize
 
-        let showTrackInfo = defaults.object(forKey: Self.keyShowTrackInfo) as? Bool ?? true
+        let showTrackInfo = defaults.object(forKey: Self.keyShowTrackInfo) as? Bool ?? false
         trackInfoCheckbox.state = showTrackInfo ? .on : .off
     }
 
@@ -314,6 +314,7 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
     @objc private func onAlbumArtCheckboxChanged() {
         let showArt = albumArtCheckbox.state == .on
         UserDefaults.standard.set(showArt, forKey: Self.keyShowAlbumArt)
+        NotificationCenter.default.post(name: Notification.Name("io.github.ridhaaf.lirik.albumArtChanged"), object: nil)
     }
 
     @objc private func onAlbumArtSizeChanged() {
@@ -338,10 +339,10 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
         UserDefaults.standard.set(11, forKey: Self.keyFontSize)
         UserDefaults.standard.set("auto", forKey: Self.keyPreferredPlayer)
         UserDefaults.standard.set(true, forKey: Self.keyShowPauseIcon)
-        UserDefaults.standard.set(true, forKey: Self.keyEnableMarquee)
-        UserDefaults.standard.set(true, forKey: Self.keyShowAlbumArt)
+        UserDefaults.standard.set(false, forKey: Self.keyEnableMarquee)
+        UserDefaults.standard.set(false, forKey: Self.keyShowAlbumArt)
         UserDefaults.standard.set(1, forKey: Self.keyAlbumArtSize) // Medium default
-        UserDefaults.standard.set(true, forKey: Self.keyShowTrackInfo)
+        UserDefaults.standard.set(false, forKey: Self.keyShowTrackInfo)
         UserDefaults.standard.set("white", forKey: Self.keyHighlightColor)
         UserDefaults.standard.set("left", forKey: Self.keyAlignment)
         loadSavedPreferences()

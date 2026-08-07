@@ -117,6 +117,7 @@ class LyricsWidget: NSObject, PKWidget {
         super.init()
         setupUI()
         setupWatcherCallbacks()
+        observePreferenceChanges()
         // Ensure watcher starts watching immediately upon initialization
         nowPlayingWatcher.startWatching()
     }
@@ -261,7 +262,7 @@ class LyricsWidget: NSObject, PKWidget {
 
                 // Show track info briefly if enabled
                 let defaults = UserDefaults.standard
-                if defaults.object(forKey: LirikPreferenceViewController.keyShowTrackInfo) as? Bool ?? true {
+                if defaults.object(forKey: LirikPreferenceViewController.keyShowTrackInfo) as? Bool ?? false {
                     self.trackInfoVisibleUntil = Date().addingTimeInterval(3.0)
                 }
 
@@ -290,6 +291,36 @@ class LyricsWidget: NSObject, PKWidget {
                 } else if case .staticOnly(_, _, let text) = self.uiState {
                     self.renderStaticLyrics(text, elapsed: elapsed, trackDuration: track.duration, isPaused: !track.isPlaying)
                 }
+            }
+        }
+    }
+
+    // MARK: - Preference Change Observers
+
+    /// Observes realtime preference changes (e.g. album art toggle) to update the widget immediately
+    /// without waiting for the next track change.
+    private func observePreferenceChanges() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(onAlbumArtPreferenceChanged),
+            name: Notification.Name("io.github.ridhaaf.lirik.albumArtChanged"),
+            object: nil
+        )
+    }
+
+    @objc private func onAlbumArtPreferenceChanged() {
+        let defaults = UserDefaults.standard
+        let showArt = defaults.object(forKey: LirikPreferenceViewController.keyShowAlbumArt) as? Bool ?? false
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            if showArt {
+                // Re-fetch artwork for the current track
+                if let track = self.nowPlayingWatcher.currentTrack {
+                    self.fetchAlbumArt(for: track)
+                }
+            } else {
+                self.albumArtImageView.isHidden = true
             }
         }
     }
@@ -461,7 +492,7 @@ class LyricsWidget: NSObject, PKWidget {
 
     private func formatLineText(_ text: String) -> String {
         let defaults = UserDefaults.standard
-        let enableMarquee = defaults.object(forKey: LirikPreferenceViewController.keyEnableMarquee) as? Bool ?? true
+        let enableMarquee = defaults.object(forKey: LirikPreferenceViewController.keyEnableMarquee) as? Bool ?? false
 
         guard enableMarquee, text.count > 42 else { return text }
 
@@ -473,13 +504,15 @@ class LyricsWidget: NSObject, PKWidget {
     }
 
     private func renderStaticLyrics(_ text: String, elapsed: TimeInterval, trackDuration: TimeInterval?, isPaused: Bool) {
-        // If track info is still visible, show it instead of lyrics
-        if let trackInfo = trackInfoText() {
-            currentLineLabel.stringValue = trackInfo
+        // If track info is still visible, show it instead of lyrics (karaoke style: title on top, artist below)
+        if let (title, artist) = trackInfoComponents() {
+            currentLineLabel.stringValue = title
             currentLineLabel.textColor = resolveHighlightColor(isPaused: false)
             currentLineLabel.font = NSFont.boldSystemFont(ofSize: 11)
-            nextLineLabel.stringValue = ""
-            nextLineLabel.isHidden = true
+            nextLineLabel.stringValue = artist
+            nextLineLabel.font = NSFont.systemFont(ofSize: 9)
+            nextLineLabel.textColor = .secondaryLabelColor
+            nextLineLabel.isHidden = false
             return
         }
 
@@ -520,13 +553,15 @@ class LyricsWidget: NSObject, PKWidget {
     }
 
     private func renderSyncSnapshot(_ snapshot: LRCSyncSnapshot, isPaused: Bool) {
-        // If track info is still visible, show it instead of lyrics
-        if let trackInfo = trackInfoText() {
+        // If track info is still visible, show it instead of lyrics (karaoke style: title on top, artist below)
+        if let (title, artist) = trackInfoComponents() {
             currentLineLabel.textColor = resolveHighlightColor(isPaused: false)
             currentLineLabel.font = NSFont.boldSystemFont(ofSize: 11)
-            currentLineLabel.stringValue = trackInfo
-            nextLineLabel.stringValue = ""
-            nextLineLabel.isHidden = true
+            currentLineLabel.stringValue = title
+            nextLineLabel.stringValue = artist
+            nextLineLabel.font = NSFont.systemFont(ofSize: 9)
+            nextLineLabel.textColor = .secondaryLabelColor
+            nextLineLabel.isHidden = false
             return
         }
 
@@ -578,7 +613,7 @@ class LyricsWidget: NSObject, PKWidget {
     /// Skips fetch if the "Show album artwork" preference is disabled.
     private func fetchAlbumArt(for track: NowPlayingTrack) {
         let defaults = UserDefaults.standard
-        let showArt = defaults.object(forKey: LirikPreferenceViewController.keyShowAlbumArt) as? Bool ?? true
+        let showArt = defaults.object(forKey: LirikPreferenceViewController.keyShowAlbumArt) as? Bool ?? false
         guard showArt else {
             DispatchQueue.main.async { [weak self] in
                 self?.albumArtImageView.isHidden = true
@@ -636,10 +671,50 @@ class LyricsWidget: NSObject, PKWidget {
         label.stringValue = text
     }
 
-    /// Returns the track info line (Artist — Title) or nil if track info display is not active.
-    private func trackInfoText() -> String? {
+    /// Returns the track info as (title, artist) tuple or nil if track info display is not active.
+    /// Karaoke style: song title on top (bold), artist name below (small/muted).
+    /// Extracts featuring info from the title and appends it to the artist for display,
+    /// since Spotify's AppleScript API only returns the primary artist.
+    private func trackInfoComponents() -> (title: String, artist: String)? {
         guard let until = trackInfoVisibleUntil, Date() < until,
               let track = nowPlayingWatcher.currentTrack else { return nil }
-        return "\(track.artist) — \(track.title)"
+
+        let displayArtist = artistWithFeaturing(artist: track.artist, title: track.title)
+        return (title: track.title, artist: displayArtist)
+    }
+
+    /// Extracts featuring info (ft., feat., with) from the track title and appends
+    /// it to the artist name for display purposes only. Does not affect lyrics search.
+    ///
+    /// Examples:
+    ///   - title: "Song (feat. Artist B)", artist: "Artist A" → "Artist A ft. Artist B"
+    ///   - title: "Song [ft. Artist B]", artist: "Artist A" → "Artist A ft. Artist B"
+    ///   - title: "Song", artist: "Artist A" → "Artist A" (unchanged)
+    private func artistWithFeaturing(artist: String, title: String) -> String {
+        // Match patterns: (feat. ...), [feat. ...], (ft. ...), [ft. ...], (with ...)
+        // Also matches unparenthesized: "Song feat. Artist B", "Song ft. Artist B"
+        let patterns = [
+            "\\(feat\\.\\s*([^)]+)\\)",
+            "\\[feat\\.\\s*([^\\]]+)\\]",
+            "\\(ft\\.\\s*([^)]+)\\)",
+            "\\[ft\\.\\s*([^\\]]+)\\]",
+            "\\(with\\s+([^)]+)\\)",
+            "\\[with\\s+([^\\]]+)\\]",
+            "\\sfeat\\.\\s+(.+)$",
+            "\\sft\\.\\s+(.+)$"
+        ]
+
+        for pattern in patterns {
+            if let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
+               let match = regex.firstMatch(in: title, options: [], range: NSRange(title.startIndex..., in: title)),
+               let featRange = Range(match.range(at: 1), in: title) {
+                let featArtist = String(title[featRange]).trimmingCharacters(in: .whitespaces)
+                if !featArtist.isEmpty {
+                    return "\(artist) ft. \(featArtist)"
+                }
+            }
+        }
+
+        return artist
     }
 }
