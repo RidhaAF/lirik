@@ -98,11 +98,13 @@ Rendering code (`Widget/`) should contain no networking or parsing logic — it 
 
 - Accessibility permission: only required if a fallback AppleScript polling path is added (PRD §7.1 fallback). Not required for the MediaRemote-only path.
 - **Automation permission: required on macOS 15.4+** where MediaRemote.framework is blocked by entitlement enforcement and AppleScript polling is the primary backend. macOS will prompt the user on first use for each target app (Spotify, Apple Music). Not required on older macOS where MediaRemote still works.
+- **TCC prompt fix**: AppleScript execution uses `/usr/bin/osascript` as a child process, NOT in-process `NSAppleScript`. Pock loads Lirik as a plugin bundle in its own process — macOS TCC suppresses Automation permission dialogs for code running inside another app's process (error -1743). Spawning `osascript` as a separate process escapes this restriction. Do NOT revert to `NSAppleScript` or `AEDeterminePermissionToAutomateTarget`.
 - No network entitlement beyond standard outbound HTTPS to LRCLIB/Genius.
 
 ## 11. Known Fragile Areas & Verified Environment
 
 - **MediaRemote.framework API Blocked on macOS 15.4+**: `MRMediaRemoteGetNowPlayingInfo` symbols resolve via `dlsym`, but callbacks silently fail due to entitlement enforcement in `mediaremoted`. Dual-backend architecture uses `AppleScriptBackend` on macOS 15.4+ and `MediaRemoteBackend` on older macOS.
+- **TCC Dialog Suppression in Plugin Context (RESOLVED)**: When Lirik runs as a Pock plugin, macOS TCC suppresses Automation permission dialogs for in-process `NSAppleScript` / `AEDeterminePermissionToAutomateTarget` calls (error -1743 immediate). Fixed by spawning `/usr/bin/osascript` as a child process — the separate process is outside Pock's context, so TCC presents the consent dialog normally.
 - **Environment Verified Against**:
   - **macOS**: `macOS 15.7.7` (Build `24G720`, Apple Silicon `arm64`)
   - **Xcode**: `Xcode 26.3` (Build `17C529`)

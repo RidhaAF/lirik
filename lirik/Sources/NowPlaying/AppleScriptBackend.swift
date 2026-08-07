@@ -10,13 +10,17 @@
 //  on a configurable polling interval. Only polls apps that are
 //  currently running to avoid launching them unnecessarily.
 //
-//  Requires macOS Automation permission — the system will prompt
-//  the user on first use for each target app.
+//  IMPORTANT: All AppleScript execution uses `/usr/bin/osascript` as a
+//  child process rather than in-process `NSAppleScript`. This is
+//  critical because Lirik runs as a plugin loaded into Pock.app's
+//  process space — macOS TCC suppresses the Automation permission
+//  dialog for bundles loaded into another app (error -1743). Spawning
+//  `osascript` as a separate process escapes Pock's plugin sandbox,
+//  allowing the TCC dialog to appear correctly.
 //
 
 import Foundation
 import AppKit
-import CoreServices
 
 /// Polls Spotify and Apple Music via AppleScript to detect what's playing.
 final class AppleScriptBackend {
@@ -34,34 +38,21 @@ final class AppleScriptBackend {
     /// Callback fired when macOS blocks AppleScript with error -1743 (Automation Permission Denied)
     var onPermissionDenied: ((String) -> Void)?
 
-    // MARK: - Automation Permission Prompt Trigger
-
-    /// Requests macOS Automation permission for the target application bundle identifier.
-    /// Calling this on the main thread causes macOS to present the system authorization alert:
-    /// "[App] would like to control [TargetApp]. [Don't Allow] [OK]"
-    @discardableResult
-    static func requestAutomationPermission(for bundleID: String) -> OSStatus {
-        var address = AEAddressDesc()
-        let data = bundleID.data(using: .utf8)!
-        let status = data.withUnsafeBytes { ptr -> OSStatus in
-            guard let base = ptr.baseAddress else { return OSStatus(errAEEventNotPermitted) }
-            return OSStatus(AECreateDesc(typeApplicationBundleID, base, data.count, &address))
-        }
-        guard status == noErr else { return status }
-
-        let result = AEDeterminePermissionToAutomateTarget(&address, typeWildCard, typeWildCard, true)
-        AEDisposeDesc(&address)
-        return result
-    }
+    /// Serial queue for running osascript without blocking the main thread
+    private let scriptQueue = DispatchQueue(label: "io.github.ridhaaf.lirik.applescript", qos: .userInitiated)
 
     // MARK: - Public API
 
     /// Performs a one-shot fetch of now-playing info from whichever
     /// supported app is currently running and playing.
     func fetchNowPlaying(completion: @escaping (NowPlayingTrack?) -> Void) {
-        DispatchQueue.main.async { [weak self] in
-            let track = self?.queryNowPlaying()
-            completion(track)
+        scriptQueue.async { [weak self] in
+            guard let self else {
+                DispatchQueue.main.async { completion(nil) }
+                return
+            }
+            let track = self.queryNowPlaying()
+            DispatchQueue.main.async { completion(track) }
         }
     }
 
@@ -71,27 +62,28 @@ final class AppleScriptBackend {
     func startPolling(onUpdate: @escaping (NowPlayingTrack?) -> Void) {
         self.onUpdate = onUpdate
 
-        // Prompt for permissions upfront on main thread if needed
-        if isAppRunning(bundleIdentifier: "com.spotify.client") {
-            Self.requestAutomationPermission(for: "com.spotify.client")
-        }
-        if isAppRunning(bundleIdentifier: "com.apple.Music") {
-            Self.requestAutomationPermission(for: "com.apple.Music")
+        // Fire immediately on the script queue
+        scriptQueue.async { [weak self] in
+            guard let self else { return }
+            let track = self.queryNowPlaying()
+            DispatchQueue.main.async { onUpdate(track) }
         }
 
-        // Fire immediately, then repeat on interval
+        // Schedule repeating timer on main thread; each tick dispatches
+        // the actual script work to the serial scriptQueue
         DispatchQueue.main.async { [weak self] in
-            let track = self?.queryNowPlaying()
-            onUpdate(track)
-        }
-
-        pollTimer = Timer.scheduledTimer(
-            withTimeInterval: pollingInterval,
-            repeats: true
-        ) { [weak self] _ in
-            DispatchQueue.main.async {
-                let track = self?.queryNowPlaying()
-                self?.onUpdate?(track)
+            guard let self else { return }
+            self.pollTimer = Timer.scheduledTimer(
+                withTimeInterval: self.pollingInterval,
+                repeats: true
+            ) { [weak self] _ in
+                self?.scriptQueue.async { [weak self] in
+                    guard let self else { return }
+                    let track = self.queryNowPlaying()
+                    DispatchQueue.main.async {
+                        self.onUpdate?(track)
+                    }
+                }
             }
         }
     }
@@ -107,8 +99,9 @@ final class AppleScriptBackend {
 
     /// Queries running media apps in priority order. Returns the first
     /// one that reports a playing track, or nil if nothing is playing.
+    /// Called on scriptQueue — must not touch the main thread directly.
     private func queryNowPlaying() -> NowPlayingTrack? {
-        // Spotify takes priority because it's more common for lyrics use
+        // isAppRunning uses NSWorkspace which is thread-safe for reads
         if isAppRunning(bundleIdentifier: "com.spotify.client") {
             if let track = querySpotify() {
                 return track
@@ -135,7 +128,7 @@ final class AppleScriptBackend {
     // MARK: - Spotify
 
     private func querySpotify() -> NowPlayingTrack? {
-        // Single compound query to minimize AppleScript round-trips.
+        // Single compound query to minimize osascript round-trips.
         // Returns a record with all fields we need in one call.
         let script = """
         tell application "Spotify"
@@ -222,28 +215,61 @@ final class AppleScriptBackend {
         )
     }
 
-    // MARK: - Script execution
+    // MARK: - Script execution via osascript child process
 
-    /// Executes an AppleScript string on main thread and returns the result as a
-    /// trimmed string, or nil on error.
+    /// Executes an AppleScript string by spawning `/usr/bin/osascript` as a
+    /// child process. Returns the trimmed stdout on success, or nil on error.
+    ///
+    /// Using a child process instead of in-process `NSAppleScript` is the
+    /// key fix: when Lirik runs as a Pock plugin loaded into Pock.app's
+    /// address space, macOS TCC suppresses the Automation permission dialog
+    /// for in-process AppleScript calls (error -1743). The separate
+    /// `osascript` process is outside Pock's sandbox, so TCC correctly
+    /// presents the "[App] wants to control [TargetApp]" consent prompt.
+    ///
+    /// Called on scriptQueue — synchronous and blocking by design.
     private func runAppleScript(_ source: String, appName: String) -> String? {
-        let appleScript = NSAppleScript(source: source)
-        var errorInfo: NSDictionary?
-        let result = appleScript?.executeAndReturnError(&errorInfo)
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = ["-e", source]
 
-        if let error = errorInfo {
-            let errorNumber = error[NSAppleScript.errorNumber] as? Int ?? 0
-            if errorNumber == -1743 {
-                NSLog("[AppleScriptBackend] ⚠️ AUTOMATION PERMISSION DENIED (-1743) for \(appName). Grant Pock permission in System Settings -> Privacy & Security -> Automation.")
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
+
+        do {
+            try process.run()
+        } catch {
+            NSLog("[AppleScriptBackend] Failed to launch osascript: \(error.localizedDescription)")
+            return nil
+        }
+
+        process.waitUntilExit()
+
+        let status = process.terminationStatus
+
+        if status != 0 {
+            let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+            let stderrString = String(data: stderrData, encoding: .utf8) ?? ""
+
+            // osascript exits with status 1 and stderr containing the error
+            // number when macOS blocks Automation. Detect -1743 in stderr.
+            if stderrString.contains("-1743") {
+                NSLog("[AppleScriptBackend] ⚠️ AUTOMATION PERMISSION DENIED (-1743) for \(appName). Grant permission in System Settings -> Privacy & Security -> Automation.")
                 DispatchQueue.main.async { [weak self] in
                     self?.onPermissionDenied?(appName)
                 }
-            } else if errorNumber != -128 && errorNumber != -1728 {
-                NSLog("[AppleScriptBackend] Script error \(errorNumber): \(error[NSAppleScript.errorMessage] as? String ?? "unknown")")
+            } else if !stderrString.contains("-128") && !stderrString.contains("-1728") {
+                // -128 = user cancelled, -1728 = app not running / no current track — both expected
+                NSLog("[AppleScriptBackend] osascript error (exit \(status)) for \(appName): \(stderrString.trimmingCharacters(in: .whitespacesAndNewlines))")
             }
             return nil
         }
 
-        return result?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+        guard let output = String(data: stdoutData, encoding: .utf8) else { return nil }
+
+        return output.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
