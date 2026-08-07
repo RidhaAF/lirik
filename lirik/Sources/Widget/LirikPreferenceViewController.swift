@@ -36,16 +36,22 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
     static let keyHighlightColor = "io.github.ridhaaf.lirik.highlightColor"
     static let keyAlignment = "io.github.ridhaaf.lirik.alignment"
     static let keyEnableMarquee = "io.github.ridhaaf.lirik.enableMarquee"
+    static let keyShowAlbumArt = "io.github.ridhaaf.lirik.showAlbumArt"
+    static let keyAlbumArtSize = "io.github.ridhaaf.lirik.albumArtSize"
+    static let keyShowTrackInfo = "io.github.ridhaaf.lirik.showTrackInfo"
 
     // MARK: - UI Controls
 
     private let dualLineControl = NSSegmentedControl(labels: ["2-Line Karaoke", "1-Line Compact"], trackingMode: .selectOne, target: nil, action: nil)
-    private let fontSizeControl = NSSegmentedControl(labels: ["Small (10pt)", "Medium (11pt)", "Large (12pt)"], trackingMode: .selectOne, target: nil, action: nil)
+    private let fontSizeControl = NSSegmentedControl(labels: ["Small", "Medium", "Large"], trackingMode: .selectOne, target: nil, action: nil)
     private let colorControl = NSSegmentedControl(labels: ["White", "Gold", "Cyan", "Green", "Purple", "Pink", "Orange", "Red"], trackingMode: .selectOne, target: nil, action: nil)
     private let alignmentControl = NSSegmentedControl(labels: ["Left Aligned", "Center Aligned"], trackingMode: .selectOne, target: nil, action: nil)
     private let playerPopUp = NSPopUpButton()
     private let pauseIconCheckbox = NSButton(checkboxWithTitle: "Show ⏸ icon when track is paused", target: nil, action: nil)
     private let marqueeCheckbox = NSButton(checkboxWithTitle: "Enable marquee scrolling for long lyric lines", target: nil, action: nil)
+    private let albumArtCheckbox = NSButton(checkboxWithTitle: "Show album artwork thumbnail", target: nil, action: nil)
+    private let albumArtSizeControl = NSSegmentedControl(labels: ["Small", "Medium", "Large"], trackingMode: .selectOne, target: nil, action: nil)
+    private let trackInfoCheckbox = NSButton(checkboxWithTitle: "Show song title & artist when track changes", target: nil, action: nil)
     private let clearCacheButton = NSButton(title: "Clear Cached Lyrics", target: nil, action: nil)
     private let cacheStatusLabel = NSTextField(labelWithString: "")
 
@@ -116,13 +122,27 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
         playerTitle.font = NSFont.systemFont(ofSize: 12, weight: .medium)
         playerStackView.addArrangedSubview(playerTitle)
 
-        playerPopUp.addItems(withTitles: ["Auto-detect (Spotify priority)", "Spotify Only", "Apple Music Only"])
+        playerPopUp.addItems(withTitles: ["Auto-detect", "Spotify Only", "Apple Music Only"])
         playerStackView.addArrangedSubview(playerPopUp)
         mainStackView.addArrangedSubview(playerStackView)
 
-        // 6. Checkboxes (Pause Indicator & Marquee Scrolling)
+        // 6. Checkboxes (Pause Indicator, Marquee Scrolling, Album Art, Track Info)
         mainStackView.addArrangedSubview(pauseIconCheckbox)
         mainStackView.addArrangedSubview(marqueeCheckbox)
+        mainStackView.addArrangedSubview(albumArtCheckbox)
+
+        // Album Art Size
+        let artSizeStackView = NSStackView()
+        artSizeStackView.orientation = .vertical
+        artSizeStackView.alignment = .leading
+        artSizeStackView.spacing = 4
+        let artSizeTitle = NSTextField(labelWithString: "Album Artwork Size:")
+        artSizeTitle.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        artSizeStackView.addArrangedSubview(artSizeTitle)
+        artSizeStackView.addArrangedSubview(albumArtSizeControl)
+        mainStackView.addArrangedSubview(artSizeStackView)
+
+        mainStackView.addArrangedSubview(trackInfoCheckbox)
 
         // 7. Clear Cache Button
         let cacheStackView = NSStackView()
@@ -160,7 +180,16 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
         marqueeCheckbox.target = self
         marqueeCheckbox.action = #selector(onMarqueeCheckboxChanged)
 
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 380, height: 450))
+        albumArtCheckbox.target = self
+        albumArtCheckbox.action = #selector(onAlbumArtCheckboxChanged)
+
+        albumArtSizeControl.target = self
+        albumArtSizeControl.action = #selector(onAlbumArtSizeChanged)
+
+        trackInfoCheckbox.target = self
+        trackInfoCheckbox.action = #selector(onTrackInfoCheckboxChanged)
+
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 380, height: 520))
         mainStackView.frame = container.bounds
         mainStackView.autoresizingMask = [.width, .height]
         container.addSubview(mainStackView)
@@ -214,8 +243,17 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
         let showPause = defaults.object(forKey: Self.keyShowPauseIcon) as? Bool ?? true
         pauseIconCheckbox.state = showPause ? .on : .off
 
-        let marquee = defaults.object(forKey: Self.keyEnableMarquee) as? Bool ?? true
+        let marquee = defaults.object(forKey: Self.keyEnableMarquee) as? Bool ?? false
         marqueeCheckbox.state = marquee ? .on : .off
+
+        let showArt = defaults.object(forKey: Self.keyShowAlbumArt) as? Bool ?? false
+        albumArtCheckbox.state = showArt ? .on : .off
+
+        let artSize = defaults.object(forKey: Self.keyAlbumArtSize) as? Int ?? 1
+        albumArtSizeControl.selectedSegment = artSize
+
+        let showTrackInfo = defaults.object(forKey: Self.keyShowTrackInfo) as? Bool ?? false
+        trackInfoCheckbox.state = showTrackInfo ? .on : .off
     }
 
     @objc private func onDualLineChanged() {
@@ -273,6 +311,21 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
         UserDefaults.standard.set(marquee, forKey: Self.keyEnableMarquee)
     }
 
+    @objc private func onAlbumArtCheckboxChanged() {
+        let showArt = albumArtCheckbox.state == .on
+        UserDefaults.standard.set(showArt, forKey: Self.keyShowAlbumArt)
+        NotificationCenter.default.post(name: Notification.Name("io.github.ridhaaf.lirik.albumArtChanged"), object: nil)
+    }
+
+    @objc private func onAlbumArtSizeChanged() {
+        UserDefaults.standard.set(albumArtSizeControl.selectedSegment, forKey: Self.keyAlbumArtSize)
+    }
+
+    @objc private func onTrackInfoCheckboxChanged() {
+        let showTrackInfo = trackInfoCheckbox.state == .on
+        UserDefaults.standard.set(showTrackInfo, forKey: Self.keyShowTrackInfo)
+    }
+
     @objc private func onClearCacheTapped() {
         lyricsCache.clear()
         cacheStatusLabel.stringValue = "✓ Cache Cleared"
@@ -286,7 +339,10 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
         UserDefaults.standard.set(11, forKey: Self.keyFontSize)
         UserDefaults.standard.set("auto", forKey: Self.keyPreferredPlayer)
         UserDefaults.standard.set(true, forKey: Self.keyShowPauseIcon)
-        UserDefaults.standard.set(true, forKey: Self.keyEnableMarquee)
+        UserDefaults.standard.set(false, forKey: Self.keyEnableMarquee)
+        UserDefaults.standard.set(false, forKey: Self.keyShowAlbumArt)
+        UserDefaults.standard.set(1, forKey: Self.keyAlbumArtSize) // Medium default
+        UserDefaults.standard.set(false, forKey: Self.keyShowTrackInfo)
         UserDefaults.standard.set("white", forKey: Self.keyHighlightColor)
         UserDefaults.standard.set("left", forKey: Self.keyAlignment)
         loadSavedPreferences()
