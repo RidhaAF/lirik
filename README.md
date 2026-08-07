@@ -12,14 +12,18 @@
 - **Smart Track Sanitization**: Automatically cleans track titles (strips `(Remastered)`, `[feat.]`, `- Live`) for **30%+ higher lyric match rates**.
 - **Tap-to-Copy Touch Bar Gesture**: Tap any active lyric on your Touch Bar to instantly copy the text to your macOS clipboard.
 - **Auto-Advancing Plain-Text Fallback**: Progressively steps through static lyrics if time-synced LRC lyrics are unavailable.
+- **Album Artwork Thumbnail**: Displays album cover art alongside lyrics on the Touch Bar.
+- **Song Title & Artist Display**: Shows song title and artist name (with featuring info) when a track changes, karaoke-style.
 - **Customizable Preferences**:
   - **Display Mode**: Choose between **2-Line Karaoke** or **1-Line Compact** mode.
   - **Text Alignment**: **Left Aligned** or **Center Aligned**.
-  - **Lyric Text Size**: Small (10pt), Medium (11pt), or Large (12pt).
+  - **Lyric Text Size**: Small, Medium, or Large.
   - **8 Highlight Color Themes**: White, Gold, Cyan, Green, Purple, Pink, Orange, and Red.
   - **Marquee Scrolling Toggle**: Enable/disable smooth horizontal marquee scrolling for long lyric lines.
   - **Music Player Source**: Auto-detect, Spotify Only, or Apple Music Only.
   - **Pause Indicator**: Toggle `⏸` icon display when paused.
+  - **Album Artwork**: Toggle album artwork thumbnail and choose size (Small, Medium, Large).
+  - **Song Title & Artist**: Toggle song title & artist display when track changes.
   - **Clear Cache Button**: Purge local disk cache with one click.
 - **Zero Backend**: 100% client-side, lightweight, and fast.
 
@@ -99,6 +103,9 @@ You can customize Lirik's layout, colors, alignment, and font size directly insi
    - **Highlight Color**: Choose from 8 themes (*White, Gold, Cyan, Green, Purple, Pink, Orange, Red*).
    - **Marquee Scrolling**: Toggle smooth scrolling for long lines.
    - **Player Source**: Select *Auto-detect*, *Spotify*, or *Apple Music*.
+   - **Pause Indicator**: Toggle `⏸` icon when paused.
+   - **Album Artwork**: Toggle album artwork thumbnail and choose size.
+   - **Song Title & Artist**: Toggle song title & artist display on track change.
    - **Clear Cache**: One-click button to purge local lyrics cache.
 
 ---
