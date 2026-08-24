@@ -53,6 +53,14 @@ final class NowPlayingWatcher {
     /// Starts watching for now-playing changes. Auto-detects which
     /// backend to use based on what actually works on this OS version.
     func startWatching() {
+        // Idempotent: if a backend is already active, just force a refresh
+        // rather than double-registering observers and timers.
+        if activeBackend != nil {
+            NSLog("[NowPlayingWatcher] startWatching called while already active — forcing refresh instead")
+            forceRefresh()
+            return
+        }
+
         NSLog("[NowPlayingWatcher] Starting — probing backends...")
 
         if mediaRemoteBackend.isAvailable {
@@ -60,6 +68,27 @@ final class NowPlayingWatcher {
         } else {
             NSLog("[NowPlayingWatcher] MediaRemote not available, using AppleScript")
             startAppleScriptBackend()
+        }
+    }
+
+    /// Forces an immediate refetch from whichever backend is active.
+    /// Call this after the Touch Bar wakes, the widget re-appears, or the
+    /// system wakes from sleep — situations where our polling timers may
+    /// have quiesced or MediaRemote snapshots may be stale.
+    ///
+    /// Safe to call even before a backend is selected (no-op in that case).
+    func forceRefresh() {
+        switch activeBackend {
+        case .mediaRemote:
+            mediaRemoteBackend.fetchNowPlaying(timeout: 2.0) { [weak self] track in
+                self?.handleUpdate(track)
+            }
+        case .appleScript:
+            appleScriptBackend.fetchNowPlaying { [weak self] track in
+                self?.handleUpdate(track)
+            }
+        case .none:
+            break
         }
     }
 

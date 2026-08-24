@@ -86,15 +86,18 @@ final class AppleScriptBackend {
             self?.onUpdate?(track)
         }
 
-        pollTimer = Timer.scheduledTimer(
-            withTimeInterval: pollingInterval,
-            repeats: true
-        ) { [weak self] _ in
+        // Schedule via RunLoop with .common modes so the timer keeps firing
+        // even when the main runloop enters tracking modes (Touch Bar / DFR
+        // event tracking on Pock can otherwise silently pause a .default-mode
+        // timer, which manifests as "lyrics stuck after resume from pause").
+        let timer = Timer(timeInterval: pollingInterval, repeats: true) { [weak self] _ in
             DispatchQueue.main.async {
                 let track = self?.queryNowPlaying()
                 self?.onUpdate?(track)
             }
         }
+        RunLoop.main.add(timer, forMode: .common)
+        pollTimer = timer
     }
 
     /// Stops polling and cleans up the timer.

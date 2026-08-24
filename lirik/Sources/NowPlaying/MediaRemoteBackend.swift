@@ -45,6 +45,12 @@ final class MediaRemoteBackend {
     static let durationKey   = "kMRMediaRemoteNowPlayingInfoDuration"
     static let elapsedKey    = "kMRMediaRemoteNowPlayingInfoElapsedTime"
     static let playbackRateKey = "kMRMediaRemoteNowPlayingInfoPlaybackRate"
+    /// Wall-clock timestamp (Date) when MediaRemote captured the elapsed-time snapshot.
+    /// Used to interpolate live elapsed = snapshot + (now - timestamp) * playbackRate.
+    /// Without this, elapsed values go stale between MediaRemote pushes (which do NOT
+    /// tick continuously — see refetchTimer comment). Especially critical after Touch Bar
+    /// sleep or system sleep, when refetches may have been paused.
+    static let infoUpdateTimeKey = "kMRMediaRemoteNowPlayingInfoTimestamp"
 
     // Notification names posted by MediaRemote via NotificationCenter.
     static let infoDidChangeNotification =
@@ -60,6 +66,17 @@ final class MediaRemoteBackend {
     private var registerForNotifications: RegisterForNotificationsFn?
     private var notificationObservers: [NSObjectProtocol] = []
     private var onUpdate: (([String: Any]) -> Void)?
+
+    /// Periodic refetch timer. MediaRemote notifications only fire on
+    /// state transitions (play/pause, track change, metadata change) —
+    /// they do NOT tick continuously with elapsed time. Without a local
+    /// timer, lyrics freeze after resume because the widget only ever
+    /// receives one elapsed-time snapshot per state change.
+    ///
+    /// The 1s interval matches AppleScriptBackend's polling cadence and
+    /// keeps lyric-line resolution current while playing.
+    private var refetchTimer: Timer?
+    private let refetchInterval: TimeInterval = 1.0
 
     /// Whether the framework loaded and symbols resolved successfully.
     private(set) var isAvailable: Bool = false
@@ -181,10 +198,23 @@ final class MediaRemoteBackend {
 
         registerForNotifications(DispatchQueue.main)
         NSLog("[MediaRemoteBackend] Registered for now-playing notifications")
+
+        // Start periodic refetch so elapsed time advances between state-change
+        // notifications. Without this, `onUpdate` only fires on play/pause/track
+        // events and lyrics freeze after resume (see refetchTimer doc above).
+        // Scheduled on the main runloop in .common modes so Touch Bar / DFR
+        // event tracking cannot pause the timer.
+        let timer = Timer(timeInterval: refetchInterval, repeats: true) { [weak self] _ in
+            self?.refetchAndNotify()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        refetchTimer = timer
     }
 
     /// Stops listening and cleans up observers.
     func stopObserving() {
+        refetchTimer?.invalidate()
+        refetchTimer = nil
         for observer in notificationObservers {
             NotificationCenter.default.removeObserver(observer)
         }
@@ -211,8 +241,32 @@ final class MediaRemoteBackend {
         let artist = info[Self.artistKey] as? String ?? "Unknown Artist"
         let album = info[Self.albumKey] as? String
         let duration = info[Self.durationKey] as? TimeInterval
-        let elapsed = info[Self.elapsedKey] as? TimeInterval
+        let rawElapsed = info[Self.elapsedKey] as? TimeInterval
         let playbackRate = info[Self.playbackRateKey] as? Double ?? 0.0
+
+        // Interpolate elapsed against wall-clock timestamp of the snapshot.
+        // MediaRemote's elapsed field is a SNAPSHOT captured at `infoUpdateTime`,
+        // not a live value. Between refetches (and especially after Touch Bar/system
+        // sleep), the snapshot can be seconds stale — causing lyrics to freeze on the
+        // "line at snapshot time" rather than the actual current playback line.
+        let elapsed: TimeInterval?
+        if let base = rawElapsed {
+            if let snapshotDate = info[Self.infoUpdateTimeKey] as? Date, playbackRate > 0 {
+                let delta = Date().timeIntervalSince(snapshotDate)
+                // Clamp delta to non-negative; ignore clock skew going backwards.
+                let live = base + max(0, delta) * playbackRate
+                // Clamp against duration to avoid running past the end while stale.
+                if let d = duration, d > 0 {
+                    elapsed = min(live, d)
+                } else {
+                    elapsed = live
+                }
+            } else {
+                elapsed = base
+            }
+        } else {
+            elapsed = nil
+        }
 
         return NowPlayingTrack(
             title: title,
