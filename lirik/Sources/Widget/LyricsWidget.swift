@@ -118,21 +118,84 @@ class LyricsWidget: NSObject, PKWidget {
         setupUI()
         setupWatcherCallbacks()
         observePreferenceChanges()
+        observeSystemWakeAndVisibility()
         // Ensure watcher starts watching immediately upon initialization
         nowPlayingWatcher.startWatching()
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+        NSWorkspace.shared.notificationCenter.removeObserver(self)
+        DistributedNotificationCenter.default().removeObserver(self)
     }
 
     // MARK: - PKWidget Lifecycle Hooks
 
     func viewAppeared() {
-        NSLog("[LyricsWidget] viewAppeared — starting NowPlayingWatcher")
+        NSLog("[LyricsWidget] viewAppeared — starting NowPlayingWatcher + forcing refresh")
         nowPlayingWatcher.startWatching()
+        // Whenever the widget comes back into view (Touch Bar wake, DFR resume,
+        // app switch, etc.) force a fresh poll so we don't render stale state.
+        nowPlayingWatcher.forceRefresh()
+        // Also re-render current state so any UI derived from stale elapsed
+        // time recomputes against the freshest snapshot.
+        DispatchQueue.main.async { [weak self] in self?.updateUI() }
     }
 
     func viewDisappeared() {
         NSLog("[LyricsWidget] viewDisappeared — stopping NowPlayingWatcher")
         inFlightFetchTask?.cancel()
         nowPlayingWatcher.stopWatching()
+    }
+
+    // MARK: - System wake / Touch Bar wake handling
+
+    /// Observes system + Touch Bar wake and app-activation events so we can
+    /// force-refresh the now-playing snapshot the instant the widget becomes
+    /// user-visible again. Fixes the "lyrics frozen after Touch Bar goes to
+    /// sleep" symptom: even with `.common`-mode timers, timer firings can
+    /// coalesce or MediaRemote snapshots stay stale across a DFR sleep, so
+    /// we need an explicit "wake → refresh" edge.
+    private func observeSystemWakeAndVisibility() {
+        let ws = NSWorkspace.shared.notificationCenter
+
+        // System wake from sleep (lid open, power button, etc.)
+        ws.addObserver(
+            self,
+            selector: #selector(handleSystemDidWake),
+            name: NSWorkspace.didWakeNotification,
+            object: nil
+        )
+
+        // Screen wake (Touch Bar comes back on when the display wakes)
+        ws.addObserver(
+            self,
+            selector: #selector(handleSystemDidWake),
+            name: NSWorkspace.screensDidWakeNotification,
+            object: nil
+        )
+
+        // Session became active (fast user switching back to us)
+        ws.addObserver(
+            self,
+            selector: #selector(handleSystemDidWake),
+            name: NSWorkspace.sessionDidBecomeActiveNotification,
+            object: nil
+        )
+
+        // App activation — proxy for "user is back at the machine"
+        ws.addObserver(
+            self,
+            selector: #selector(handleSystemDidWake),
+            name: NSWorkspace.didActivateApplicationNotification,
+            object: nil
+        )
+    }
+
+    @objc private func handleSystemDidWake(_ note: Notification) {
+        NSLog("[LyricsWidget] Wake/activation event (\(note.name.rawValue)) — forcing refresh")
+        nowPlayingWatcher.forceRefresh()
+        DispatchQueue.main.async { [weak self] in self?.updateUI() }
     }
 
     // MARK: - UI Setup
