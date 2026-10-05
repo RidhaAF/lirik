@@ -1,4 +1,4 @@
-# 🎵 Lirik — Touch Bar Synced Lyrics for macOS (v1.3.1)
+# 🎵 Lirik — Touch Bar Synced Lyrics for macOS (v1.4.0)
 
 **Lirik** is a macOS Touch Bar widget that displays real-time synchronized lyrics for whatever song is playing in **Spotify**, **Apple Music**, or **YouTube in a browser (Safari, Chrome, Edge)**. Built as a native plugin for **Pock**.
 

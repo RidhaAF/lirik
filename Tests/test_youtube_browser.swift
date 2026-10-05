@@ -17,6 +17,29 @@
 
 import Foundation
 
+/// URLProtocol stub that replays canned responses so the LRCLIB retry
+/// chain can be tested without network access.
+final class StubURLProtocol: URLProtocol {
+    static var responses: [(status: Int, json: String)] = []
+    static var recordedURLs: [URL] = []
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let url = request.url else { return }
+        Self.recordedURLs.append(url)
+        let index = min(Self.recordedURLs.count - 1, Self.responses.count - 1)
+        let stub = Self.responses[index]
+        guard let response = HTTPURLResponse(url: url, statusCode: stub.status, httpVersion: nil, headerFields: nil) else { return }
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(stub.json.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+}
+
 @main
 struct YouTubeBrowserTests {
 
@@ -37,7 +60,7 @@ struct YouTubeBrowserTests {
         check(actual == expected, "\(message) (got: \(actual))")
     }
 
-    static func main() {
+    static func main() async {
         // ─── Group 1: splitArtistTitle ─────────────────────────────
 
         print("Group 1: BrowserTabPoller.splitArtistTitle")
@@ -103,6 +126,9 @@ struct YouTubeBrowserTests {
         checkEqual(LRCLIBClient.cleanTrackTitle("Song (Remastered 2021)"), "Song", "existing remaster rule still works")
         checkEqual(LRCLIBClient.cleanTrackTitle("Midnight (feat. Artist B)"), "Midnight", "existing feat rule still works with YT title")
         checkEqual(LRCLIBClient.cleanTrackTitle("Ordinary Song Title"), "Ordinary Song Title", "clean title untouched")
+        checkEqual(LRCLIBClient.cleanTrackTitle("Waiting For The End (Official Music Video) [4K Upgrade]"), "Waiting For The End", "strips combined official + 4K noise")
+        checkEqual(LRCLIBClient.cleanTrackTitle("Song (4K Remaster)"), "Song", "strips (4K Remaster)")
+        checkEqual(LRCLIBClient.cleanTrackTitle("Song [HD]"), "Song", "strips [HD]")
 
         // ─── Group 4: source-aware track identity ──────────────────
 
@@ -116,6 +142,55 @@ struct YouTubeBrowserTests {
         check(!spotifyTrack.isSameTrack(as: browserTrack), "same song on Spotify vs YouTube counts as track change")
         check(spotifyTrack.isSameTrack(as: spotifyLater), "elapsed-time update on same source is not a change")
         check(!spotifyTrack.isSameTrack(as: otherSong), "different song is a change")
+
+        // ─── Group 5: swapped artist/title retry ───────────────────
+
+        print("\nGroup 5: LRCLIBClient swapped retry (Title - Artist uploads)")
+
+        // Simulates what BrowserTabPoller produces for a "Title - Artist"
+        // upload like "Waiting For The End (…) - Linkin Park": the split
+        // yields a backwards pair, so the first lookup 404s and the client
+        // must retry with the fields swapped.
+        StubURLProtocol.recordedURLs = []
+        StubURLProtocol.responses = [
+            (404, ""),
+            (200, #"{"id": 42, "trackName": "Waiting For The End", "artistName": "Linkin Park", "syncedLyrics": "[00:01.00] first line\n", "plainLyrics": "first line\n"}"#),
+        ]
+        let stubConfig = URLSessionConfiguration.ephemeral
+        stubConfig.protocolClasses = [StubURLProtocol.self]
+        let stubClient = LRCLIBClient(session: URLSession(configuration: stubConfig))
+
+        do {
+            let result = try await stubClient.fetchLyrics(
+                title: "Linkin Park",
+                artist: "Waiting For The End (Official Music Video) [4K Upgrade]"
+            )
+            check(result == .synced(id: 42, lrcText: "[00:01.00] first line\n", plainLyrics: "first line\n"), "swapped retry resolves synced lyrics")
+            checkEqual(StubURLProtocol.recordedURLs.count, 2, "exactly two requests (initial + swapped; clean title needs no sanitize retry)")
+
+            let queryItems = StubURLProtocol.recordedURLs.map { url in
+                URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            }
+            let firstTrack = queryItems[0].first(where: { $0.name == "track_name" })?.value
+            let secondTrack = queryItems[1].first(where: { $0.name == "track_name" })?.value
+            let secondArtist = queryItems[1].first(where: { $0.name == "artist_name" })?.value
+            checkEqual(firstTrack, "Linkin Park", "first request uses split order")
+            checkEqual(secondTrack, "Waiting For The End", "retry swaps in cleaned video title")
+            checkEqual(secondArtist, "Linkin Park", "retry swaps in artist")
+        } catch {
+            check(false, "swapped retry does not throw (threw: \(error))")
+        }
+
+        // Unknown Artist must not trigger a swap retry (nothing to swap with).
+        StubURLProtocol.recordedURLs = []
+        StubURLProtocol.responses = [(404, "")]
+        do {
+            let result = try await stubClient.fetchLyrics(title: "Never Gonna Give You Up", artist: "Unknown Artist")
+            check(result == .notFound, "unknown-artist miss stays notFound")
+            checkEqual(StubURLProtocol.recordedURLs.count, 1, "no swap retry for Unknown Artist")
+        } catch {
+            check(false, "unknown-artist lookup does not throw (threw: \(error))")
+        }
 
         print("\n══════════════════════════════════════════════════════")
         print("RESULTS: \(passCount) PASSED, \(failCount) FAILED")

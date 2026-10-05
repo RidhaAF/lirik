@@ -2,6 +2,18 @@
 
 All notable changes to Lirik are documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased] — 1.4.0
+
+### Added
+- YouTube browser lyrics: picks up YouTube music videos playing in Safari, Chrome, or Edge via AppleScript tab polling, with live `<video>` position for synced karaoke lyrics (falls back to auto-advancing static lyrics when the browser's "Allow JavaScript from Apple Events" toggle is off)
+- "Browser Only" Music Player Source option; priority is Spotify > Apple Music > Browser when several play at once
+- LRCLIB swapped artist/title retry for "Title – Artist" ordered uploads, plus YouTube title-noise stripping (Official Music Video/Audio, Lyric Video, Visualizer, M/V, 4K/HD tags)
+
+### Fixed
+- Music Player Source preference is now actually honored when polling (previously write-only)
+- Same song on different sources counts as a track change (durations and cache keys differ per source)
+- TCC permission dialog now appears for browsers via a subprocess trigger (in-process AppleScript can't present it when Pock wasn't launched from Finder)
+
 ## [1.3.1] — 2026-08-25
 
 ### Fixed
