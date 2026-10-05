@@ -129,6 +129,7 @@ struct YouTubeBrowserTests {
         checkEqual(LRCLIBClient.cleanTrackTitle("Waiting For The End (Official Music Video) [4K Upgrade]"), "Waiting For The End", "strips combined official + 4K noise")
         checkEqual(LRCLIBClient.cleanTrackTitle("Song (4K Remaster)"), "Song", "strips (4K Remaster)")
         checkEqual(LRCLIBClient.cleanTrackTitle("Song [HD]"), "Song", "strips [HD]")
+        checkEqual(LRCLIBClient.cleanTrackTitle("In The End [Live in São Paulo] (Official Video)"), "In The End", "strips bracketed live tag + official video")
 
         // ─── Group 4: source-aware track identity ──────────────────
 

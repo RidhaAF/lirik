@@ -76,6 +76,7 @@ final class LRCLIBClient: Sendable {
             "\\s*\\[.*deluxe.*\\]",
             "\\s*\\(.*edition.*\\)",
             "\\s*\\(.*live.*\\)",
+            "\\s*\\[.*live.*\\]",
             "\\s*-\\s*live.*",
             "\\s*-\\s*remastered.*",
             "\\s*\\(feat\\..*\\)",
