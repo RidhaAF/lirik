@@ -122,7 +122,7 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
         playerTitle.font = NSFont.systemFont(ofSize: 12, weight: .medium)
         playerStackView.addArrangedSubview(playerTitle)
 
-        playerPopUp.addItems(withTitles: ["Auto-detect", "Spotify Only", "Apple Music Only"])
+        playerPopUp.addItems(withTitles: ["Auto-detect", "Spotify Only", "Apple Music Only", "Browser Only"])
         playerStackView.addArrangedSubview(playerPopUp)
         mainStackView.addArrangedSubview(playerStackView)
 
@@ -236,6 +236,8 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
             playerPopUp.selectItem(at: 1)
         } else if player == "music" {
             playerPopUp.selectItem(at: 2)
+        } else if player == "browser" {
+            playerPopUp.selectItem(at: 3)
         } else {
             playerPopUp.selectItem(at: 0)
         }
@@ -296,6 +298,7 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
         switch playerPopUp.indexOfSelectedItem {
         case 1: player = "spotify"
         case 2: player = "music"
+        case 3: player = "browser"
         default: player = "auto"
         }
         UserDefaults.standard.set(player, forKey: Self.keyPreferredPlayer)
