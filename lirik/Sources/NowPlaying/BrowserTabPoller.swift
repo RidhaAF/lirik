@@ -126,8 +126,13 @@ final class BrowserTabPoller {
         )
     }
 
-    /// Locates the first youtube.com/watch tab in a browser.
+    /// Locates the first YouTube watch tab in a browser.
     /// Returns the tab title plus window/tab indices for the position query.
+    ///
+    /// Matches watch, Shorts, youtu.be shares, live streams, and YouTube
+    /// Music — all of which render a <video> element the position probe
+    /// can read. Plain youtube.com home/channel pages are excluded since
+    /// they carry no single playable track.
     private func findYouTubeTab(in browser: Browser) -> (title: String, windowIndex: Int, tabIndex: Int)? {
         let titleProperty = browser == .safari ? "name" : "title"
         let script = """
@@ -139,7 +144,7 @@ final class BrowserTabPoller {
                     on error
                         set tabURL to ""
                     end try
-                    if tabURL contains "youtube.com/watch" then
+                    if tabURL contains "youtube.com/watch" or tabURL contains "youtube.com/shorts/" or tabURL contains "youtube.com/live/" or tabURL contains "youtu.be/" or tabURL contains "music.youtube.com" then
                         set tabTitle to \(titleProperty) of tab t of window w
                         return tabURL & "|||" & tabTitle & "|||" & w & "|||" & t
                     end if
