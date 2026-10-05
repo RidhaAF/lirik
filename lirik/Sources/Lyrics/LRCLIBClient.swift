@@ -64,7 +64,9 @@ final class LRCLIBClient: Sendable {
         self.session = session
     }
 
-    /// Sanitizes track titles by stripping common noise like "(Remastered 2021)", "- Live", "[feat. ...]"
+    /// Sanitizes track titles by stripping common noise like "(Remastered 2021)", "- Live", "[feat. ...]".
+    /// Also covers YouTube-style suffixes ("Official Music Video", "Lyric Video", "Audio", "M/V")
+    /// since browser tab titles carry them verbatim.
     static func cleanTrackTitle(_ title: String) -> String {
         var cleaned = title
         let patterns = [
@@ -78,7 +80,24 @@ final class LRCLIBClient: Sendable {
             "\\s*-\\s*remastered.*",
             "\\s*\\(feat\\..*\\)",
             "\\s*\\[feat\\..*\\]",
-            "\\s*ft\\..*"
+            "\\s*ft\\..*",
+            // YouTube upload noise (case-insensitive): covers
+            // "(Official Music Video)", "[Official 4K Video]", "(Lyric Video)", etc.
+            "\\s*\\([^)]*official[^)]*video[^)]*\\)",
+            "\\s*\\[[^\\]]*official[^\\]]*video[^\\]]*\\]",
+            "\\s*\\([^)]*official[^)]*audio[^)]*\\)",
+            "\\s*\\[[^\\]]*official[^\\]]*audio[^\\]]*\\]",
+            "\\s*-\\s*official\\s*(music\\s*)?(video|audio)\\s*$",
+            "\\s*\\([^)]*lyrics?\\s*video[^)]*\\)",
+            "\\s*\\[[^\\]]*lyrics?\\s*video[^\\]]*\\]",
+            "\\s*\\([^)]*visualizer[^)]*\\)",
+            "\\s*\\[[^\\]]*visualizer[^\\]]*\\]",
+            "\\s*\\([^)]*\\bM/?V\\b[^)]*\\)",
+            "\\s*\\[[^\\]]*\\bM/?V\\b[^\\]]*\\]",
+            "\\s*\\([^)]*\\baudio\\b[^)]*\\)",
+            "\\s*\\[[^\\]]*\\baudio\\b[^\\]]*\\]",
+            "\\s*-\\s*audio\\s*$",
+            "\\s*\\|\\s*provided to youtube.*"
         ]
 
         for pattern in patterns {
