@@ -92,7 +92,7 @@ When playing music for the first time:
 ### 🌐 YouTube Browser Setup
 
 1. Play any YouTube music video in **Safari**, **Chrome**, or **Edge**. macOS will prompt once per browser — click **Allow** (enable later under **System Settings** $\rightarrow$ **Privacy & Security** $\rightarrow$ **Automation** $\rightarrow$ **Pock**).
-2. **Safari only**: enable **Develop** $\rightarrow$ **Allow JavaScript from Apple Events** (show the Develop menu via **Safari Settings** $\rightarrow$ **Advanced**). Without this, Lirik can read the video title but not the playback position, so lyrics fall back to auto-advancing static mode.
+2. **All browsers**: enable **Allow JavaScript from Apple Events** (in **View** $\rightarrow$ **Developer**; in Safari first show the Develop menu via **Safari Settings** $\rightarrow$ **Advanced**). Without this, Lirik can read the video title but not the playback position, so lyrics fall back to auto-advancing static mode.
 
 ### ⚖️ Conflict behavior (Spotify/Music + YouTube at once)
 

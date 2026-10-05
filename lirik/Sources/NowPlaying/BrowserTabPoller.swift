@@ -14,10 +14,12 @@
 //  lyrics keep working — not just the static fallback.
 //
 //  Permissions: each browser needs macOS Automation permission (the system
-//  prompts on first poll). Safari additionally requires the user to enable
-//  Develop → Allow JavaScript from Apple Events, otherwise only the title
-//  is readable and the track is returned without position (LyricsWidget
-//  then degrades to auto-advancing static lyrics).
+//  prompts on first poll via a subprocess trigger, same pattern as
+//  AppleScriptBackend). Every browser — Safari, Chrome, Edge — additionally
+//  needs View/Develop → Allow JavaScript from Apple Events enabled for the
+//  position query; without it only the title is readable and the track is
+//  returned without position (LyricsWidget then degrades to auto-advancing
+//  static lyrics).
 //
 //  Must be called on the main thread — NSAppleScript is not thread-safe,
 //  and AppleScriptBackend already polls on the main runloop.
@@ -63,6 +65,10 @@ final class BrowserTabPoller {
     /// Browsers we've already logged a -1743 denial for this session.
     /// One log line per browser — the 1s poller would otherwise spam.
     private var permissionNoted: Set<String> = []
+
+    /// Browsers we've already spawned a TCC dialog trigger for.
+    /// Only one subprocess per browser per session — avoids spamming.
+    private var dialogTriggered: Set<String> = []
 
     // MARK: - Public API
 
@@ -237,9 +243,19 @@ final class BrowserTabPoller {
         if let error = errorInfo {
             let code = error[NSAppleScript.errorNumber] as? Int ?? 0
             if code == -1743 {
+                // First denial: spawn a /usr/bin/osascript subprocess to force
+                // the TCC Allow/Deny dialog. In-process NSAppleScript cannot
+                // trigger the dialog when Pock was launched via Spotlight,
+                // Finder-open, or our own build script — same root cause as
+                // AppleScriptBackend.triggerDialogViaSubprocess. The subprocess
+                // runs outside Pock's process tree, so the dialog appears.
+                if !dialogTriggered.contains(browser.displayName) {
+                    dialogTriggered.insert(browser.displayName)
+                    triggerDialogViaSubprocess(for: browser)
+                }
                 if !permissionNoted.contains(browser.displayName) {
                     permissionNoted.insert(browser.displayName)
-                    NSLog("[BrowserTabPoller] Automation permission needed for %@ — allow Pock in System Settings → Privacy & Security → Automation. Safari also needs Develop → Allow JavaScript from Apple Events.", browser.displayName)
+                    NSLog("[BrowserTabPoller] Automation permission needed for %@ — allow Pock in System Settings → Privacy & Security → Automation. All browsers also need View → Developer → Allow JavaScript from Apple Events for live position.", browser.displayName)
                 }
             } else if code != -128 && code != -1719 && code != -1728 {
                 // -128 user cancelled, -1719 object not found (closed tab),
@@ -252,5 +268,29 @@ final class BrowserTabPoller {
         guard let output = result.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
               !output.isEmpty else { return nil }
         return output
+    }
+
+    // MARK: - Subprocess dialog trigger
+
+    /// Spawns `/usr/bin/osascript` asking the browser for its own name —
+    /// a no-op query whose only purpose is making macOS present the
+    /// Automation permission dialog outside Pock's process tree.
+    /// Fire-and-forget; the next 1s poll picks up the granted state.
+    private func triggerDialogViaSubprocess(for browser: Browser) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = ["-e", "tell application \"\(browser.scriptName)\" to get name"]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                try process.run()
+                process.waitUntilExit()
+                NSLog("[BrowserTabPoller] Subprocess dialog trigger for %@ exited with code \(process.terminationStatus)", browser.displayName)
+            } catch {
+                NSLog("[BrowserTabPoller] Failed to spawn subprocess for %@: \(error.localizedDescription)", browser.displayName)
+            }
+        }
     }
 }
