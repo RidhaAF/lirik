@@ -28,10 +28,14 @@ struct NowPlayingTrack: Sendable, Equatable {
     let isPlaying: Bool
     let source: NowPlayingSource
 
-    /// Two tracks represent the "same song" if title and artist match,
+    /// Two tracks represent the "same song" if title, artist, and source match,
     /// regardless of elapsed time or playback state. Used to detect
     /// track *changes* vs. mere position/state updates.
+    ///
+    /// Source is compared so that switching the same song between e.g.
+    /// Spotify and a browser YouTube tab refetches (durations — and therefore
+    /// cache keys and LRCLIB duration matching — usually differ per source).
     func isSameTrack(as other: NowPlayingTrack) -> Bool {
-        return title == other.title && artist == other.artist
+        return title == other.title && artist == other.artist && source == other.source
     }
 }

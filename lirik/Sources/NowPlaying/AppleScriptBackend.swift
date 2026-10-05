@@ -42,6 +42,14 @@ final class AppleScriptBackend {
     /// Callback fired when macOS blocks AppleScript with error -1743 (Automation Permission Denied)
     var onPermissionDenied: ((String) -> Void)?
 
+    /// YouTube-in-browser polling. Lowest priority: only consulted when no
+    /// music app reports a track (see queryNowPlaying).
+    private let browserTabPoller = BrowserTabPoller()
+
+    /// UserDefaults key for the preferred player (owned by LirikPreferenceViewController).
+    /// Read here so the preference actually filters polling — previously write-only.
+    private let preferredPlayerKey = "io.github.ridhaaf.lirik.preferredPlayer"
+
     // MARK: - Permission retry tracking
 
     /// How many consecutive -1743 errors we've seen per app.
@@ -111,7 +119,24 @@ final class AppleScriptBackend {
 
     /// Queries running media apps in priority order. Returns the first
     /// one that reports a playing track, or nil if nothing is playing.
+    ///
+    /// Priority is Spotify > Apple Music > browser YouTube: music apps
+    /// match lyrics far more reliably than YouTube tab titles, so a music
+    /// app track wins even when a browser tab is also playing. The user's
+    /// Music Player Source preference can narrow polling to a single source.
     private func queryNowPlaying() -> NowPlayingTrack? {
+        let preference = UserDefaults.standard.string(forKey: preferredPlayerKey) ?? "auto"
+        switch preference {
+        case "spotify":
+            return querySpotify()
+        case "music":
+            return queryAppleMusic()
+        case "browser":
+            return browserTabPoller.queryYouTube()
+        default:
+            break
+        }
+
         // Spotify takes priority because it's more common for lyrics use
         if isAppRunning(bundleIdentifier: "com.spotify.client") {
             if let track = querySpotify() {
@@ -125,7 +150,7 @@ final class AppleScriptBackend {
             }
         }
 
-        return nil
+        return browserTabPoller.queryYouTube()
     }
 
     /// Checks whether an app with the given bundle identifier is running,
