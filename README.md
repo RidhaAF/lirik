@@ -1,6 +1,6 @@
-# 🎵 Lirik — Touch Bar Synced Lyrics for macOS (v1.4.0)
+# 🎵 Lirik — Touch Bar Synced Lyrics for macOS (v1.4.1)
 
-**Lirik** is a macOS Touch Bar widget that displays real-time synchronized lyrics for whatever song is playing in **Spotify**, **Apple Music**, or **YouTube in a browser (Safari, Chrome, Edge)**. Built as a native plugin for **Pock**.
+**Lirik** is a macOS Touch Bar widget that displays real-time synchronized lyrics for whatever song is playing in **Spotify**, **Apple Music**, **YouTube**, or **YouTube Music** in a browser (Safari, Chrome, Edge). Built as a native plugin for **Pock**.
 
 ![Lirik Touch Bar Demo](assets/demo.jpg)
 
@@ -10,6 +10,7 @@
 
 - **Real-Time Karaoke Lyrics**: Synchronized line-by-line lyrics powered by LRCLIB API with binary-search sync engine.
 - **YouTube Browser Support**: Picks up YouTube music videos playing in Safari, Chrome, or Edge (tab title + live `<video>` position). Music apps take priority when both play at once — see *Conflict behavior* below.
+- **YouTube Music Support**: `music.youtube.com` tabs use exact Media Session metadata (title, artist, album) instead of tab-title parsing, plus audible-tab ranking when several browsers play at once.
 - **Smart Track Sanitization**: Automatically cleans track titles (strips `(Remastered)`, `[feat.]`, `- Live`) for **30%+ higher lyric match rates**.
 - **Tap-to-Copy Touch Bar Gesture**: Tap any active lyric on your Touch Bar to instantly copy the text to your macOS clipboard.
 - **Auto-Advancing Plain-Text Fallback**: Progressively steps through static lyrics if time-synced LRC lyrics are unavailable.

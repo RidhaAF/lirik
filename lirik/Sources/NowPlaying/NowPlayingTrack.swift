@@ -14,6 +14,7 @@ enum NowPlayingSource: String, Sendable {
     case spotify = "Spotify"
     case appleMusic = "Apple Music"
     case browser = "Browser"
+    case youTubeMusic = "YouTube Music"
     case unknown = "Unknown"
 }
 

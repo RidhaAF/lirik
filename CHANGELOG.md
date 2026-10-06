@@ -2,6 +2,12 @@
 
 All notable changes to Lirik are documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased] — 1.4.1
+
+### Added
+- YouTube Music support: `music.youtube.com` tabs resolve exact title/artist/album via Media Session metadata (tab titles stay generic) and report as their own source
+- Audible-tab ranking: a muted/autoplaying background tab no longer shadows the video being watched (muted state read from the `<video>` element; replaces the AppleScript `audible` probe, which browsers don't expose)
+
 ## [Unreleased] — 1.4.0
 
 ### Added

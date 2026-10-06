@@ -96,8 +96,21 @@ struct YouTubeBrowserTests {
             checkEqual(p.elapsed, 12.5, "elapsed parsed")
             checkEqual(p.duration, 213.0, "duration parsed")
             check(p.isPlaying, "playing state parsed")
+            check(!p.muted, "missing muted segment means sound")
         } else {
             check(false, "valid probe output parses")
+        }
+
+        if let p = BrowserTabPoller.parsePositionOutput("12.5|||213.0|||playing|||muted") {
+            check(p.isPlaying && p.muted, "muted flag parsed")
+        } else {
+            check(false, "muted probe output parses")
+        }
+
+        if let p = BrowserTabPoller.parsePositionOutput("12.5|||213.0|||playing|||sound") {
+            check(p.isPlaying && !p.muted, "sound flag parsed as unmuted")
+        } else {
+            check(false, "sound probe output parses")
         }
 
         if let p = BrowserTabPoller.parsePositionOutput("0|||0|||paused") {
@@ -139,10 +152,12 @@ struct YouTubeBrowserTests {
         let browserTrack = NowPlayingTrack(title: "Anti-Hero", artist: "Taylor Swift", album: nil, duration: 234, elapsedTime: 10, isPlaying: true, source: .browser, videoId: "dQw4w9WgXcQ")
         let spotifyLater = NowPlayingTrack(title: "Anti-Hero", artist: "Taylor Swift", album: nil, duration: 200, elapsedTime: 90, isPlaying: true, source: .spotify, videoId: nil)
         let otherSong = NowPlayingTrack(title: "Shake It Off", artist: "Taylor Swift", album: nil, duration: 200, elapsedTime: 0, isPlaying: true, source: .spotify, videoId: nil)
+        let ytmTrack = NowPlayingTrack(title: "Anti-Hero", artist: "Taylor Swift", album: "Midnights", duration: 200, elapsedTime: 10, isPlaying: true, source: .youTubeMusic, videoId: "dQw4w9WgXcQ")
 
         check(!spotifyTrack.isSameTrack(as: browserTrack), "same song on Spotify vs YouTube counts as track change")
         check(spotifyTrack.isSameTrack(as: spotifyLater), "elapsed-time update on same source is not a change")
         check(!spotifyTrack.isSameTrack(as: otherSong), "different song is a change")
+        check(!browserTrack.isSameTrack(as: ytmTrack), "YouTube vs YouTube Music counts as track change")
 
         // ─── Group 5: swapped artist/title retry ───────────────────
 
@@ -231,6 +246,30 @@ struct YouTubeBrowserTests {
         check(BrowserTabPoller.extractVideoId(from: "https://www.youtube.com/") == nil, "home page has no ID")
         check(BrowserTabPoller.extractVideoId(from: "https://www.youtube.com/@LinkinPark") == nil, "channel page has no ID")
         check(BrowserTabPoller.extractVideoId(from: "not a url") == nil, "garbage has no ID")
+
+        // ─── Group 8: resolveMetadata (Media Session) ──────────────
+
+        print("\nGroup 8: BrowserTabPoller.resolveMetadata")
+
+        let ytm = BrowserTabPoller.MediaSessionMetadata(title: "L’AMOUR DE MA VIE", artist: "Billie Eilish", album: "HIT ME HARD AND SOFT")
+        let resolved = BrowserTabPoller.resolveMetadata(tabTitle: "YouTube Music", mediaSession: ytm, isMusic: true)
+        checkEqual(resolved.title, "L’AMOUR DE MA VIE", "YTM prefers Media Session title over generic tab title")
+        checkEqual(resolved.artist, "Billie Eilish", "YTM prefers Media Session artist")
+        checkEqual(resolved.album, "HIT ME HARD AND SOFT", "YTM surfaces the album")
+
+        let noMS = BrowserTabPoller.resolveMetadata(tabTitle: "Taylor Swift - Anti-Hero - YouTube Music", mediaSession: nil, isMusic: true)
+        checkEqual(noMS.title, "Anti-Hero", "YTM without Media Session falls back to title split")
+        checkEqual(noMS.artist, "Taylor Swift", "YTM fallback keeps split artist")
+
+        let emptyMS = BrowserTabPoller.MediaSessionMetadata(title: "  ", artist: "", album: "")
+        let emptyResolved = BrowserTabPoller.resolveMetadata(tabTitle: "Daft Punk - Around the World - YouTube", mediaSession: emptyMS, isMusic: true)
+        checkEqual(emptyResolved.title, "Around the World", "blank Media Session falls back to split")
+
+        // Plain YouTube ignores Media Session (artist would be the channel).
+        let channelMS = BrowserTabPoller.MediaSessionMetadata(title: "Waiting For The End (Official Music Video)", artist: "Linkin Park", album: "")
+        let plainResolved = BrowserTabPoller.resolveMetadata(tabTitle: "Linkin Park - Waiting For The End - YouTube", mediaSession: channelMS, isMusic: false)
+        checkEqual(plainResolved.title, "Waiting For The End", "plain YouTube keeps tab-title split")
+        check(plainResolved.album == nil, "plain YouTube reports no album")
 
         print("\n══════════════════════════════════════════════════════")
         print("RESULTS: \(passCount) PASSED, \(failCount) FAILED")

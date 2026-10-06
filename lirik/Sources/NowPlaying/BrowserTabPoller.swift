@@ -110,12 +110,21 @@ final class BrowserTabPoller {
 
     /// Finds the YouTube tab in one browser and reads its video position.
     /// Returns the track plus whether the tab is audibly producing sound
-    /// (nil when the browser doesn't expose it — Safari has no AppleScript
-    /// audible property — used by selectBest to rank candidates).
+    /// (playing and unmuted per the <video> element; nil when unknown).
+    /// Used by selectBest to rank candidates across browsers.
     private func queryBrowser(_ browser: Browser) -> (track: NowPlayingTrack, audible: Bool?)? {
         guard let found = findYouTubeTab(in: browser) else { return nil }
 
-        let (artist, title) = Self.splitArtistTitle(from: found.title)
+        // YouTube Music exposes exact structured metadata via the Media
+        // Session API while its tab titles stay generic ("YouTube Music"),
+        // so prefer it there. Plain YouTube titles still go through the
+        // tab-title split (its Media Session artist is just the channel).
+        let mediaSession = readMediaSession(window: found.windowIndex, tab: found.tabIndex, browser: browser)
+        let (title, artist, album) = Self.resolveMetadata(
+            tabTitle: found.title,
+            mediaSession: mediaSession,
+            isMusic: found.isMusic
+        )
         guard !title.isEmpty else { return nil }
 
         // Position query is best-effort: without it (JS toggle off,
@@ -125,63 +134,86 @@ final class BrowserTabPoller {
             let track = NowPlayingTrack(
                 title: title,
                 artist: artist,
-                album: nil,
+                album: album,
                 duration: duration,
                 elapsedTime: max(0, position.elapsed),
                 isPlaying: position.isPlaying,
-                source: .browser,
+                source: found.isMusic ? .youTubeMusic : .browser,
                 videoId: found.videoId
             )
-            return (track, found.audible)
+            return (track, position.isPlaying ? !position.muted : nil)
         }
 
         let track = NowPlayingTrack(
             title: title,
             artist: artist,
-            album: nil,
+            album: album,
             duration: nil,
             elapsedTime: nil,
             isPlaying: true,
-            source: .browser,
+            source: found.isMusic ? .youTubeMusic : .browser,
             videoId: found.videoId
         )
-        return (track, found.audible)
+        return (track, nil)
+    }
+
+    /// Structured metadata from the Media Session API. Empty strings mean
+    /// the page hasn't published metadata (backgrounded tab, ad playing).
+    struct MediaSessionMetadata: Sendable, Equatable {
+        let title: String
+        let artist: String
+        let album: String
+    }
+
+    /// Resolves track metadata, preferring structured Media Session values
+    /// on YouTube Music (exact title/artist/album) and falling back to the
+    /// tab-title split everywhere else. Pure function for testability.
+    static func resolveMetadata(tabTitle: String, mediaSession: MediaSessionMetadata?, isMusic: Bool) -> (title: String, artist: String, album: String?) {
+        if isMusic,
+           let ms = mediaSession,
+           !ms.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let artist = ms.artist.trimmingCharacters(in: .whitespacesAndNewlines)
+            let album = ms.album.trimmingCharacters(in: .whitespacesAndNewlines)
+            return (
+                ms.title.trimmingCharacters(in: .whitespacesAndNewlines),
+                artist.isEmpty ? "Unknown Artist" : artist,
+                album.isEmpty ? nil : album
+            )
+        }
+        let (artist, title) = splitArtistTitle(from: tabTitle)
+        return (title, artist, nil)
+    }
+
+    /// Reads Media Session metadata from a tab. Best-effort: returns nil
+    /// when the page hasn't published any (or JS is disabled).
+    private func readMediaSession(window: Int, tab: Int, browser: Browser) -> MediaSessionMetadata? {
+        let js = "(() => { const m = (navigator.mediaSession ? navigator.mediaSession.metadata : null); if (!m) return ''; return JSON.stringify({t: m.title||'', a: m.artist||'', al: m.album||''}); })()"
+        guard let output = runPageScript(js, browser: browser, window: window, tab: tab),
+              let data = output.data(using: .utf8),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: String] else { return nil }
+        return MediaSessionMetadata(
+            title: root["t"] ?? "",
+            artist: root["a"] ?? "",
+            album: root["al"] ?? ""
+        )
     }
 
     /// Locates the first YouTube tab in a browser.
     /// Returns the tab title, window/tab indices for the position query,
-    /// and audibility (Chrome/Edge expose `audible` per tab; Safari does
-    /// not, so it always returns nil there).
+    /// the video ID, and whether the tab is YouTube Music (which publishes
+    /// exact Media Session metadata, unlike generic tab titles).
     ///
     /// Matches watch, Shorts, youtu.be shares, live streams, and YouTube
     /// Music — all of which render a <video> element the position probe
     /// can read. Plain youtube.com home/channel pages are excluded since
     /// they carry no single playable track.
     ///
-    /// When several YouTube tabs are open, an audible one wins — a muted
-    /// background tab would otherwise shadow the video being watched.
-    private func findYouTubeTab(in browser: Browser) -> (title: String, windowIndex: Int, tabIndex: Int, audible: Bool?, videoId: String?)? {
+    /// Cross-browser preference is handled by selectBest (audible playing
+    /// tabs win); within one browser the first match wins.
+    private func findYouTubeTab(in browser: Browser) -> (title: String, windowIndex: Int, tabIndex: Int, videoId: String?, isMusic: Bool)? {
         let titleProperty = browser == .safari ? "name" : "title"
-        let audibleQuery: String
-        switch browser {
-        case .safari:
-            audibleQuery = "set audStr to \"unknown\""
-        case .chrome, .edge:
-            audibleQuery = """
-            try
-                if audible of tab t of window w then
-                    set audStr to "true"
-                else
-                    set audStr to "false"
-                end if
-            on error
-                set audStr to "unknown"
-            end try
-            """
-        }
         let script = """
         tell application "\(browser.scriptName)"
-            set firstSilent to ""
             repeat with w from 1 to (count of windows)
                 repeat with t from 1 to (count of tabs of window w)
                     try
@@ -191,33 +223,26 @@ final class BrowserTabPoller {
                     end try
                     if tabURL contains "youtube.com/watch" or tabURL contains "youtube.com/shorts/" or tabURL contains "youtube.com/live/" or tabURL contains "youtu.be/" or tabURL contains "music.youtube.com" then
                         set tabTitle to \(titleProperty) of tab t of window w
-        \(audibleQuery)
-                        if audStr is "true" then return tabURL & "|||" & tabTitle & "|||" & w & "|||" & t & "|||true"
-                        if firstSilent is "" then set firstSilent to tabURL & "|||" & tabTitle & "|||" & w & "|||" & t & "|||" & audStr
+                        return tabURL & "|||" & tabTitle & "|||" & w & "|||" & t
                     end if
                 end repeat
             end repeat
-            return firstSilent
+            return ""
         end tell
         """
 
         guard let output = runAppleScript(script, browser: browser) else { return nil }
         let parts = output.components(separatedBy: "|||")
-        guard parts.count >= 5,
+        guard parts.count >= 4,
               let windowIndex = Int(parts[2].trimmingCharacters(in: .whitespaces)),
               let tabIndex = Int(parts[3].trimmingCharacters(in: .whitespaces)) else { return nil }
         let title = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { return nil }
-        let audible: Bool?
-        switch parts[4].trimmingCharacters(in: .whitespacesAndNewlines) {
-        case "true": audible = true
-        case "false": audible = false
-        default: audible = nil
-        }
         // The tab URL doubles as the captions source key: videoId travels on
         // the track so LyricsWidget can attempt the closed-caption fallback.
         let tabURL = parts[0].trimmingCharacters(in: .whitespacesAndNewlines)
-        return (title, windowIndex, tabIndex, audible, Self.extractVideoId(from: tabURL))
+        let isMusic = tabURL.lowercased().contains("music.youtube.com")
+        return (title, windowIndex, tabIndex, Self.extractVideoId(from: tabURL), isMusic)
     }
 
     // MARK: - Video ID extraction (unit-testable, no browser needed)
@@ -251,12 +276,20 @@ final class BrowserTabPoller {
         return nil
     }
 
-    /// Reads currentTime/duration/paused from the tab's <video> element.
-    /// The JS deliberately uses single quotes only so it can be embedded
-    /// in an AppleScript double-quoted string without escaping.
-    private func readVideoPosition(in browser: Browser, window: Int, tab: Int) -> (elapsed: TimeInterval, duration: TimeInterval, isPlaying: Bool)? {
-        let js = "(() => { const v = document.querySelector('video'); if (!v) return ''; return v.currentTime + '|||' + (isFinite(v.duration) ? v.duration : 0) + '|||' + (v.paused ? 'paused' : 'playing'); })()"
+    /// Reads currentTime/duration/paused/muted from the tab's <video> element.
+    /// Muted state feeds selectBest: an autoplaying muted background tab must
+    /// not shadow the video being watched. The JS deliberately uses single
+    /// quotes only so it can be embedded in an AppleScript double-quoted
+    /// string without escaping.
+    private func readVideoPosition(in browser: Browser, window: Int, tab: Int) -> (elapsed: TimeInterval, duration: TimeInterval, isPlaying: Bool, muted: Bool)? {
+        let js = "(() => { const v = document.querySelector('video'); if (!v) return ''; return v.currentTime + '|||' + (isFinite(v.duration) ? v.duration : 0) + '|||' + (v.paused ? 'paused' : 'playing') + '|||' + (v.muted ? 'muted' : 'sound'); })()"
 
+        guard let output = runPageScript(js, browser: browser, window: window, tab: tab) else { return nil }
+        return Self.parsePositionOutput(output)
+    }
+
+    /// Runs JavaScript in a tab identified by browser/window/tab indices.
+    private func runPageScript(_ js: String, browser: Browser, window: Int, tab: Int) -> String? {
         let script: String
         switch browser {
         case .safari:
@@ -264,9 +297,7 @@ final class BrowserTabPoller {
         case .chrome, .edge:
             script = "tell application \"\(browser.scriptName)\" to execute tab \(tab) of window \(window) javascript \"\(js)\""
         }
-
-        guard let output = runAppleScript(script, browser: browser) else { return nil }
-        return Self.parsePositionOutput(output)
+        return runAppleScript(script, browser: browser)
     }
 
     // MARK: - Pure parsers (unit-testable, no browser needed)
@@ -299,9 +330,11 @@ final class BrowserTabPoller {
         return ("Unknown Artist", cleaned)
     }
 
-    /// Parses the "elapsed|||duration|||playing|paused" JS probe output.
-    /// Returns nil for empty/malformed output (no <video> on the page).
-    static func parsePositionOutput(_ output: String) -> (elapsed: TimeInterval, duration: TimeInterval, isPlaying: Bool)? {
+    /// Parses the "elapsed|||duration|||playing|paused[|||muted|sound]" probe
+    /// output. The muted segment is absent from older cached probes — treat
+    /// missing as unmuted. Returns nil for empty/malformed output (no
+    /// <video> on the page).
+    static func parsePositionOutput(_ output: String) -> (elapsed: TimeInterval, duration: TimeInterval, isPlaying: Bool, muted: Bool)? {
         let parts = output.components(separatedBy: "|||")
         guard parts.count >= 3 else { return nil }
         // JS always formats numbers with "." decimals; normalize anyway
@@ -311,7 +344,10 @@ final class BrowserTabPoller {
         guard let elapsed = TimeInterval(elapsedStr),
               let duration = TimeInterval(durationStr) else { return nil }
         let state = parts[2].trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return (elapsed, duration, state == "playing")
+        let muted = parts.count >= 4
+            ? parts[3].trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "muted"
+            : false
+        return (elapsed, duration, state == "playing", muted)
     }
 
     // MARK: - Caption capture
