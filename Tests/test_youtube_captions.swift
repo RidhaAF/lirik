@@ -128,6 +128,58 @@ struct YouTubeCaptionsTests {
         let garbageClient = YouTubeCaptionsClient(fetchCaptionJSON: { _ in "nope" })
         check(await garbageClient.fetchLyrics(videoId: "abc123") == nil, "unparsable body is nil")
 
+        // ─── Group 6: calibrationOffset ────────────────────────────
+
+        print("\nGroup 6: YouTubeCaptionsClient.calibrationOffset")
+
+        let albumLines = [
+            LRCLine(timestamp: 0.24, text: "Here we go"),
+            LRCLine(timestamp: 2.84, text: "Come with me"),
+        ]
+        // Music video opens with a ~20s dialogue intro: same words, later.
+        let videoCaptions = [
+            LRCLine(timestamp: 21.0, text: "Here we go"),
+            LRCLine(timestamp: 23.5, text: "Come with me"),
+        ]
+        if let offset = YouTubeCaptionsClient.calibrationOffset(lrclib: albumLines, captions: videoCaptions) {
+            check(abs(offset - 20.76) < 0.01, "finds +20.76s MV intro offset (got: \(offset))")
+        } else {
+            check(false, "finds MV intro offset")
+        }
+
+        check(
+            YouTubeCaptionsClient.calibrationOffset(
+                lrclib: albumLines,
+                captions: [LRCLine(timestamp: 0.3, text: "Here we go")]
+            ) == nil,
+            "negligible shift is nil (no-op)"
+        )
+        check(
+            YouTubeCaptionsClient.calibrationOffset(
+                lrclib: albumLines,
+                captions: [LRCLine(timestamp: 200.0, text: "Here we go")]
+            ) == nil,
+            "implausible shift is nil"
+        )
+        check(
+            YouTubeCaptionsClient.calibrationOffset(
+                lrclib: albumLines,
+                captions: [LRCLine(timestamp: 21.0, text: "Completely different words")]
+            ) == nil,
+            "mismatched first lines are nil (wrong-video guard)"
+        )
+        check(
+            YouTubeCaptionsClient.calibrationOffset(lrclib: [], captions: videoCaptions) == nil,
+            "empty LRC is nil"
+        )
+        check(
+            YouTubeCaptionsClient.calibrationOffset(
+                lrclib: [LRCLine(timestamp: 0.24, text: "Here we GO!")],
+                captions: [LRCLine(timestamp: 21.0, text: "here we go")]
+            ) != nil,
+            "match ignores case and punctuation"
+        )
+
         print("\n══════════════════════════════════════════════════════")
         print("RESULTS: \(passCount) PASSED, \(failCount) FAILED")
         print("══════════════════════════════════════════════════════")

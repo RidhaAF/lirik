@@ -105,6 +105,9 @@ class LyricsWidget: NSObject, PKWidget {
 
     private var activeTrackKey: String = ""
     private var inFlightFetchTask: Task<Void, Never>?
+    /// Background MV-timeline calibration (see maybeCalibrateFromCaptions).
+    /// Cancelled on track change / disappearance like the fetch task.
+    private var calibrationTask: Task<Void, Never>?
 
     private var uiState: LyricsWidgetUIState = .noTrackPlaying {
         didSet {
@@ -151,6 +154,7 @@ class LyricsWidget: NSObject, PKWidget {
     func viewDisappeared() {
         NSLog("[LyricsWidget] viewDisappeared — stopping NowPlayingWatcher")
         inFlightFetchTask?.cancel()
+        calibrationTask?.cancel()
         nowPlayingWatcher.stopWatching()
     }
 
@@ -323,6 +327,7 @@ class LyricsWidget: NSObject, PKWidget {
 
             // Cancel any in-flight fetch task from previous track immediately
             self.inFlightFetchTask?.cancel()
+            self.calibrationTask?.cancel()
 
             if let track = track {
                 self.isCurrentlyPaused = !track.isPlaying
@@ -396,6 +401,8 @@ class LyricsWidget: NSObject, PKWidget {
 
     // MARK: - Lyrics Loading & Caching Flow (Race Condition Fenced)
 
+    // MARK: - Lyrics Loading & Caching Flow (Race Condition Fenced)
+
     private func loadLyrics(for track: NowPlayingTrack, expectedKey: String, forceRefresh: Bool) {
         uiState = .loading(title: track.title, artist: track.artist)
 
@@ -440,6 +447,9 @@ class LyricsWidget: NSObject, PKWidget {
                     )
                     newState = .synced(title: track.title, artist: track.artist, lines: parsedLines)
                     self.activeLines = parsedLines
+                    // Album timing may not match the video edit — realign
+                    // quietly once captions arrive (no-op when aligned).
+                    self.maybeCalibrateFromCaptions(track: track, lines: parsedLines, lrclibID: id, expectedKey: expectedKey)
 
                 case .plainOnly(let id, let plainText):
                     cachedEntry = CachedLyrics(
@@ -498,12 +508,46 @@ class LyricsWidget: NSObject, PKWidget {
         case .synced(let lines, _):
             activeLines = lines
             uiState = .synced(title: track.title, artist: track.artist, lines: lines)
+            // Cached lines may predate calibration (or the video edit may
+            // differ from the cached one) — re-check alignment quietly.
+            maybeCalibrateFromCaptions(track: track, lines: lines, lrclibID: cached.lrclibID, expectedKey: cached.trackKey)
         case .plainOnly(let text):
             activeLines = []
             uiState = .staticOnly(title: track.title, artist: track.artist, text: text)
         case .notFound:
             activeLines = []
             uiState = .noLyricsFound(title: track.title, artist: track.artist)
+        }
+    }
+
+    /// Realigns album-timed LRCLIB lines to a music video's timeline using
+    /// closed captions as video-relative ground truth. Music videos often
+    /// open with dialogue/skits that shift every line by a constant offset
+    /// the album-timed LRC cannot know about.
+    ///
+    /// Runs in the background after LRCLIB lines are already showing and
+    /// upgrades them in place when a plausible offset is found; the cache
+    /// entry is rewritten so replays start aligned. No-op for non-browser
+    /// tracks, missing video IDs, missing captions, or implausible offsets.
+    private func maybeCalibrateFromCaptions(track: NowPlayingTrack, lines: [LRCLine], lrclibID: Int?, expectedKey: String) {
+        guard track.source == .browser, let videoId = track.videoId, !lines.isEmpty else { return }
+        calibrationTask?.cancel()
+        calibrationTask = Task { [weak self] in
+            guard let self else { return }
+            guard let captions = await self.captionsClient.fetchLyrics(videoId: videoId),
+                  !Task.isCancelled, self.activeTrackKey == expectedKey,
+                  let offset = YouTubeCaptionsClient.calibrationOffset(lrclib: lines, captions: captions.lines),
+                  !Task.isCancelled, self.activeTrackKey == expectedKey else { return }
+
+            let shifted = lines.map { LRCLine(timestamp: $0.timestamp + offset, text: $0.text) }
+            self.activeLines = shifted
+            self.uiState = .synced(title: track.title, artist: track.artist, lines: shifted)
+            self.lyricsCache.save(CachedLyrics(
+                lrclibID: lrclibID,
+                trackKey: expectedKey,
+                lyricsState: .synced(lines: shifted, rawLRC: YouTubeCaptionsClient.makeLRC(from: shifted)),
+                cachedAt: Date()
+            ))
         }
     }
 

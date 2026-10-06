@@ -122,6 +122,36 @@ final class YouTubeCaptionsClient: Sendable {
         return text
     }
 
+    /// Computes the seconds to shift album-timed LRC lines so they match a
+    /// music video's timeline, using caption timestamps as video-relative
+    /// ground truth. Music videos often open with dialogue/skits (the
+    /// Rocketeer video runs ~25s longer than its lyrics), shifting every
+    /// line by a constant offset.
+    ///
+    /// Compares first lyric-bearing lines; returns nil when the texts don't
+    /// match (wrong-video guard), the shift is negligible (< 0.5s), or
+    /// implausibly large (> 90s).
+    static func calibrationOffset(lrclib lines: [LRCLine], captions: [LRCLine]) -> TimeInterval? {
+        func firstLyric(_ lines: [LRCLine]) -> LRCLine? {
+            lines.first { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        }
+        guard let lrc = firstLyric(lines), let cap = firstLyric(captions),
+              normalizeLyric(lrc.text) == normalizeLyric(cap.text) else { return nil }
+        let offset = cap.timestamp - lrc.timestamp
+        guard abs(offset) >= 0.5, abs(offset) <= 90 else { return nil }
+        return offset
+    }
+
+    /// Normalizes lyric text for cross-source comparison: case, punctuation,
+    /// and spacing differences between LRCLIB transcriptions and captions
+    /// must not block a match.
+    static func normalizeLyric(_ text: String) -> String {
+        text.lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
     /// Renders lines as LRC text so caption results reuse the synced cache
     /// state and sync engine with no format plumbing.
     static func makeLRC(from lines: [LRCLine]) -> String {
