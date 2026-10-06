@@ -108,6 +108,14 @@ final class AppleScriptBackend {
         pollTimer = timer
     }
 
+    /// Captures the raw fmt=json3 caption body for a YouTube video ID by
+    /// replaying the player's own authorized request. Blocking (several
+    /// AppleScript round-trips with sleeps) — call off the main thread.
+    /// Returns nil when the tab is gone or capture fails at any step.
+    func fetchYouTubeCaptions(videoId: String) -> String? {
+        return browserTabPoller.fetchCaptionJSON(videoId: videoId)
+    }
+
     /// Stops polling and cleans up the timer.
     func stopPolling() {
         pollTimer?.invalidate()

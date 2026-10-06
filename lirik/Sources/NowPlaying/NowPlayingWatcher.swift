@@ -92,6 +92,15 @@ final class NowPlayingWatcher {
         }
     }
 
+    /// Captures the raw fmt=json3 caption body for a YouTube video ID.
+    /// Only available from the AppleScript backend (the only one that can
+    /// reach into browser tabs). Returns nil on the MediaRemote backend or
+    /// when capture fails. Blocking — call off the main thread.
+    func fetchYouTubeCaptions(videoId: String) async -> String? {
+        guard activeBackend == .appleScript else { return nil }
+        return appleScriptBackend.fetchYouTubeCaptions(videoId: videoId)
+    }
+
     /// Stops all watching and cleans up.
     func stopWatching() {
         NSLog("[NowPlayingWatcher] Stopping")

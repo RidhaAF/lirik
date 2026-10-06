@@ -314,6 +314,168 @@ final class BrowserTabPoller {
         return (elapsed, duration, state == "playing")
     }
 
+    // MARK: - Caption capture
+
+    /// Captures the raw fmt=json3 caption body for a video by replaying the
+    /// player's own authorized timedtext request from inside the page.
+    /// Direct fetches from Swift fail (YouTube returns HTTP 200 with an empty
+    /// body without the player-minted proof-of-origin token), so every step
+    /// runs as page JavaScript through the AppleScript bridge.
+    ///
+    /// Sequence: read context (CC state + track list) → install request hook
+    /// → cycle CC off→on to force the player to request captions → read the
+    /// captured URL → refetch it in-page with fmt=json3 → restore CC state.
+    /// Returns nil when the tab is gone, has no caption tracks, or any step
+    /// fails. Callers must invoke off the main thread: the sequence performs
+    /// several round-trips with sleeps between them.
+    func fetchCaptionJSON(videoId: String) -> String? {
+        guard let tab = locateVideoTab(videoId: videoId) else { return nil }
+
+        guard let context = readCaptionContext(tab: tab),
+              let choice = YouTubeCaptionsClient.chooseTrack(from: context.tracks) else { return nil }
+
+        runPageScript(captureHookJS, tab: tab)
+        setCaptionsEnabled(false, tab: tab)
+        Thread.sleep(forTimeInterval: 0.7)
+        setCaptionsEnabled(true, tab: tab)
+        Thread.sleep(forTimeInterval: 2.0)
+
+        guard let urls = readCapturedURLs(tab: tab), !urls.isEmpty else {
+            setCaptionsEnabled(context.ccWasOn, tab: tab)
+            return nil
+        }
+        setCaptionsEnabled(context.ccWasOn, tab: tab)
+
+        guard let body = refetchAsJSON3(urls: urls, language: choice.languageCode, tab: tab),
+              !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return body
+    }
+
+    /// A located tab plus its browser, for the capture sequence.
+    private struct LocatedTab {
+        let browser: Browser
+        let window: Int
+        let tab: Int
+    }
+
+    /// Caption context from the in-page probe.
+    private struct CaptionContext {
+        let ccWasOn: Bool
+        let tracks: [CaptionTrackOption]
+    }
+
+    /// Re-finds the tab playing a video ID. Indices from the poll may be
+    /// stale (tab closed, navigated away) by capture time.
+    private func locateVideoTab(videoId: String) -> LocatedTab? {
+        for browser in Browser.allCases {
+            guard isAppRunning(bundleIdentifier: browser.bundleIdentifier) else { continue }
+            let script = """
+            tell application "\(browser.scriptName)"
+                repeat with w from 1 to (count of windows)
+                    repeat with t from 1 to (count of tabs of window w)
+                        try
+                            set tabURL to URL of tab t of window w
+                        on error
+                            set tabURL to ""
+                        end try
+                        if tabURL contains "\(videoId)" then return (w as string) & "|||" & (t as string)
+                    end if
+                end repeat
+                return ""
+            end tell
+            """
+            guard let output = runAppleScript(script, browser: browser) else { continue }
+            let parts = output.components(separatedBy: "|||")
+            if parts.count >= 2,
+               let w = Int(parts[0].trimmingCharacters(in: .whitespaces)),
+               let t = Int(parts[1].trimmingCharacters(in: .whitespaces)) {
+                return LocatedTab(browser: browser, window: w, tab: t)
+            }
+        }
+        return nil
+    }
+
+    /// Reads CC state and the caption track list from the page.
+    private func readCaptionContext(tab: LocatedTab) -> CaptionContext? {
+        // Single quotes only, so the script embeds in an AppleScript
+        // double-quoted string without escaping (same rule as all probes).
+        let js = "(() => { const out = { ccOn: false, tracks: [] }; try { const b = document.querySelector('.ytp-subtitles-button'); out.ccOn = b ? b.getAttribute('aria-pressed') === 'true' : false; } catch (e) {} try { const p = document.querySelector('#movie_player'); let r = window.ytInitialPlayerResponse || null; if (!r && p && p.getPlayerResponse) { r = p.getPlayerResponse(); if (typeof r === 'string') { r = JSON.parse(r); } } const list = r && r.captions && r.captions.playerCaptionsTracklistRenderer; const ts = (list && list.captionTracks) || []; out.tracks = ts.map(function (t) { return { lang: t.languageCode || '', kind: t.kind || '' }; }); } catch (e) {} return JSON.stringify(out); })()"
+
+        guard let output = runPageScript(js, tab: tab),
+              let data = output.data(using: .utf8),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+
+        let ccWasOn = root["ccOn"] as? Bool ?? false
+        let rawTracks = root["tracks"] as? [[String: String]] ?? []
+        let tracks = rawTracks.compactMap { dict -> CaptionTrackOption? in
+            guard let lang = dict["lang"], !lang.isEmpty else { return nil }
+            let kind = dict["kind"]
+            return CaptionTrackOption(languageCode: lang, kind: kind?.isEmpty == true ? nil : kind)
+        }
+        guard !tracks.isEmpty else { return nil }
+        return CaptionContext(ccWasOn: ccWasOn, tracks: tracks)
+    }
+
+    /// Installs fetch/XHR hooks recording timedtext request URLs.
+    private let captureHookJS = "(() => { try { window.__lirikCap = []; const push = function (u) { try { if (typeof u === 'string' && u.indexOf('/api/timedtext') !== -1 && window.__lirikCap.indexOf(u) === -1) { window.__lirikCap.push(u); } } catch (e) {} }; const of = window.fetch; window.fetch = function (u, o) { push(typeof u === 'string' ? u : ((u && u.url) || '')); return of.apply(this, arguments); }; const oo = window.XMLHttpRequest.prototype.open; window.XMLHttpRequest.prototype.open = function (m, u) { push(u); return oo.apply(this, arguments); }; } catch (e) {} return 'ok'; })()"
+
+    /// Clicks the CC button to force the player to (re)request captions.
+    private func setCaptionsEnabled(_ enabled: Bool, tab: LocatedTab) {
+        // The button toggles, so only click when state differs from intent.
+        // State is re-read live: no cached assumptions across the sleeps.
+        let js = "(() => { const b = document.querySelector('.ytp-subtitles-button'); if (!b) { return 'missing'; } const on = b.getAttribute('aria-pressed') === 'true'; const want = \(enabled ? "true" : "false"); if (on !== want) { b.click(); } return 'ok'; })()"
+        _ = runPageScript(js, tab: tab)
+    }
+
+    /// Reads URLs captured by the hook.
+    private func readCapturedURLs(tab: LocatedTab) -> [String]? {
+        let js = "(() => { try { return JSON.stringify(window.__lirikCap || []); } catch (e) { return '[]'; } })()"
+        guard let output = runPageScript(js, tab: tab),
+              let data = output.data(using: .utf8),
+              let urls = try? JSONSerialization.jsonObject(with: data) as? [String] else { return nil }
+        return urls.filter { !$0.isEmpty }
+    }
+
+    /// Refetches a captured player URL in-page with fmt=json3 forced and
+    /// returns the body. In-page origin + cookies + token make the request
+    /// authorized; the fmt swap only changes the response serialization.
+    private func refetchAsJSON3(urls: [String], language: String, tab: LocatedTab) -> String? {
+        guard let source = urls.first(where: { Self.queryParam($0, named: "lang")?.lowercased() == language.lowercased() }) ?? urls.first,
+              var components = URLComponents(string: source) else { return nil }
+
+        var items = components.queryItems ?? []
+        if let index = items.firstIndex(where: { $0.name == "fmt" }) {
+            items[index].value = "json3"
+        } else {
+            items.append(URLQueryItem(name: "fmt", value: "json3"))
+        }
+        components.queryItems = items
+
+        guard let final = components.url?.absoluteString,
+              !final.contains("\""), !final.contains("\\") else { return nil }
+
+        let js = "(() => fetch('\(final)', {credentials: 'same-origin'}).then(function (r) { return r.text(); }).catch(function (e) { return ''; }))()"
+        return runPageScript(js, tab: tab)
+    }
+
+    /// Reads one query parameter from a URL string. Returns nil when absent.
+    private static func queryParam(_ urlString: String, named name: String) -> String? {
+        guard let components = URLComponents(string: urlString) else { return nil }
+        return components.queryItems?.first(where: { $0.name == name })?.value
+    }
+
+    /// Runs JavaScript in a located tab. Returns trimmed output or nil.
+    private func runPageScript(_ js: String, tab: LocatedTab) -> String? {
+        let script: String
+        switch tab.browser {
+        case .safari:
+            script = "tell application \"\(tab.browser.scriptName)\" to do JavaScript \"\(js)\" in tab \(tab.tab) of window \(tab.window)"
+        case .chrome, .edge:
+            script = "tell application \"\(tab.browser.scriptName)\" to execute tab \(tab.tab) of window \(tab.window) javascript \"\(js)\""
+        }
+        return runAppleScript(script, browser: tab.browser)
+    }
+
     // MARK: - Helpers
 
     private func isAppRunning(bundleIdentifier: String) -> Bool {
