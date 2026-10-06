@@ -9,6 +9,8 @@ All notable changes to Lirik are documented in this file. The format is based on
 - "Browser Only" Music Player Source option; priority is Spotify > Apple Music > Browser when several play at once
 - LRCLIB swapped artist/title retry for "Title – Artist" ordered uploads, plus YouTube title-noise stripping (Official Music Video/Audio, Lyric Video, Visualizer, M/V, 4K/HD tags)
 - Closed-caption fallback: when LRCLIB has no match for a YouTube video, lyrics come from the video's own captions (English-first), briefly cycling CC to capture them
+- MV-timeline auto-calibration: album-timed lines shift to match dialogue-intro music videos using captions as ground truth
+- Manual per-video timing offset stepper in preferences for videos that can't auto-calibrate
 
 ### Fixed
 - Music Player Source preference is now actually honored when polling (previously write-only)
