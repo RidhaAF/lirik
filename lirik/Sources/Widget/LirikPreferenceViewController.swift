@@ -59,7 +59,7 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
     /// LyricOffsetStore). Enabled only while a browser track plays.
     private let offsetStepper = NSStepper()
     private let offsetValueLabel = NSTextField(labelWithString: "")
-    private let offsetNoteLabel = NSTextField(labelWithString: "Saved per YouTube video. + delays lyrics, − shows them earlier.")
+    private let offsetNoteLabel = NSTextField(labelWithString: "Saved for this video. Positive delays the lyrics. Negative shows them earlier.")
     private var offsetVideoId: String = ""
     private let offsetStore = LyricOffsetStore()
 
@@ -386,7 +386,7 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
             let value = offsetStore.offset(forVideoId: offsetVideoId)
             offsetStepper.doubleValue = value
             offsetValueLabel.stringValue = String(format: "%+.1fs", value)
-            offsetNoteLabel.stringValue = "Saved per YouTube video. + delays lyrics, − shows them earlier."
+            offsetNoteLabel.stringValue = "Saved for this video. Positive delays the lyrics. Negative shows them earlier."
         } else {
             offsetValueLabel.stringValue = "—"
             offsetNoteLabel.stringValue = "Play a YouTube video to adjust its lyric timing."
