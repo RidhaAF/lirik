@@ -94,6 +94,7 @@ class LyricsWidget: NSObject, PKWidget {
     private let lrclibClient = LRCLIBClient()
     private let lyricsCache = LyricsCache()
     private let albumArtService = AlbumArtService()
+    private let offsetStore = LyricOffsetStore()
     /// Closed-caption fallback for YouTube tracks. Reaches back into the
     /// browser through the watcher (never around it).
     private lazy var captionsClient = YouTubeCaptionsClient(fetchCaptionJSON: { [weak self] videoId in
@@ -108,6 +109,9 @@ class LyricsWidget: NSObject, PKWidget {
     /// Background MV-timeline calibration (see maybeCalibrateFromCaptions).
     /// Cancelled on track change / disappearance like the fetch task.
     private var calibrationTask: Task<Void, Never>?
+    /// Manual per-video timing correction (see LyricOffsetStore), added to
+    /// elapsed playback time on every render. Resolved on track change.
+    private var currentVideoOffset: TimeInterval = 0
 
     private var uiState: LyricsWidgetUIState = .noTrackPlaying {
         didSet {
@@ -334,6 +338,17 @@ class LyricsWidget: NSObject, PKWidget {
                 let newKey = LyricsCache.makeTrackKey(title: track.title, artist: track.artist, duration: track.duration)
                 self.activeTrackKey = newKey
 
+                // Resolve the manual per-video offset and advertise the
+                // video so the preferences panel can offer adjustment.
+                let videoId = track.videoId ?? ""
+                self.currentVideoOffset = self.offsetStore.offset(forVideoId: videoId)
+                UserDefaults.standard.set(videoId, forKey: LyricOffsetStore.lastVideoKey)
+                NotificationCenter.default.post(
+                    name: LyricOffsetStore.trackChangedNotification,
+                    object: nil,
+                    userInfo: ["videoId": videoId]
+                )
+
                 // Show track info briefly if enabled
                 let defaults = UserDefaults.standard
                 if defaults.object(forKey: LirikPreferenceViewController.keyShowTrackInfo) as? Bool ?? false {
@@ -346,6 +361,7 @@ class LyricsWidget: NSObject, PKWidget {
                 self.activeTrackKey = ""
                 self.activeLines = []
                 self.isCurrentlyPaused = false
+                self.currentVideoOffset = 0
                 self.uiState = .noTrackPlaying
             }
         }
@@ -359,11 +375,14 @@ class LyricsWidget: NSObject, PKWidget {
             DispatchQueue.main.async {
                 self.isCurrentlyPaused = !track.isPlaying
 
+                // Manual per-video correction for music-video edits whose
+                // timing differs from the album cut (dialogue intros, etc.).
+                let effective = elapsed + self.currentVideoOffset
                 if case .synced(_, _, let lines) = self.uiState {
-                    let snapshot = LRCSyncEngine.resolve(elapsedTime: elapsed, lines: lines)
+                    let snapshot = LRCSyncEngine.resolve(elapsedTime: effective, lines: lines)
                     self.renderSyncSnapshot(snapshot, isPaused: !track.isPlaying)
                 } else if case .staticOnly(_, _, let text) = self.uiState {
-                    self.renderStaticLyrics(text, elapsed: elapsed, trackDuration: track.duration, isPaused: !track.isPlaying)
+                    self.renderStaticLyrics(text, elapsed: effective, trackDuration: track.duration, isPaused: !track.isPlaying)
                 }
             }
         }
@@ -380,6 +399,20 @@ class LyricsWidget: NSObject, PKWidget {
             name: Notification.Name("io.github.ridhaaf.lirik.albumArtChanged"),
             object: nil
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(onVideoOffsetChanged),
+            name: LyricOffsetStore.offsetChangedNotification,
+            object: nil
+        )
+    }
+
+    /// Re-reads the manual offset for the current video (saved from the
+    /// preferences panel) and re-renders immediately.
+    @objc private func onVideoOffsetChanged() {
+        let videoId = nowPlayingWatcher.currentTrack?.videoId ?? ""
+        currentVideoOffset = offsetStore.offset(forVideoId: videoId)
+        DispatchQueue.main.async { [weak self] in self?.updateUI() }
     }
 
     @objc private func onAlbumArtPreferenceChanged() {
@@ -578,7 +611,7 @@ class LyricsWidget: NSObject, PKWidget {
             nextLineLabel.stringValue = ""
 
         case .staticOnly(_, _, let text):
-            let elapsed = nowPlayingWatcher.currentTrack?.elapsedTime ?? 0
+            let elapsed = (nowPlayingWatcher.currentTrack?.elapsedTime ?? 0) + currentVideoOffset
             let duration = nowPlayingWatcher.currentTrack?.duration
             renderStaticLyrics(text, elapsed: elapsed, trackDuration: duration, isPaused: isCurrentlyPaused)
 
@@ -588,7 +621,7 @@ class LyricsWidget: NSObject, PKWidget {
                 currentLineLabel.textColor = .secondaryLabelColor
                 nextLineLabel.stringValue = ""
             } else {
-                let elapsed = nowPlayingWatcher.currentTrack?.elapsedTime ?? 0
+                let elapsed = (nowPlayingWatcher.currentTrack?.elapsedTime ?? 0) + currentVideoOffset
                 let snapshot = LRCSyncEngine.resolve(elapsedTime: elapsed, lines: lines)
                 renderSyncSnapshot(snapshot, isPaused: isCurrentlyPaused)
             }

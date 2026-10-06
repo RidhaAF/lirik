@@ -55,6 +55,14 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
     private let clearCacheButton = NSButton(title: "Clear Cached Lyrics", target: nil, action: nil)
     private let cacheStatusLabel = NSTextField(labelWithString: "")
 
+    /// Manual timing correction for the current YouTube video (see
+    /// LyricOffsetStore). Enabled only while a browser track plays.
+    private let offsetStepper = NSStepper()
+    private let offsetValueLabel = NSTextField(labelWithString: "")
+    private let offsetNoteLabel = NSTextField(labelWithString: "Saved per YouTube video. + delays lyrics, − shows them earlier.")
+    private var offsetVideoId: String = ""
+    private let offsetStore = LyricOffsetStore()
+
     private let lyricsCache = LyricsCache()
 
     override func loadView() {
@@ -144,7 +152,35 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
 
         mainStackView.addArrangedSubview(trackInfoCheckbox)
 
-        // 7. Clear Cache Button
+        // 7. Video Timing Offset (YouTube music-video edits)
+        let offsetStackView = NSStackView()
+        offsetStackView.orientation = .vertical
+        offsetStackView.alignment = .leading
+        offsetStackView.spacing = 4
+        let offsetTitle = NSTextField(labelWithString: "Video Timing Offset:")
+        offsetTitle.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        offsetStackView.addArrangedSubview(offsetTitle)
+
+        let offsetRow = NSStackView()
+        offsetRow.orientation = .horizontal
+        offsetRow.alignment = .centerY
+        offsetRow.spacing = 8
+        offsetStepper.minValue = -30
+        offsetStepper.maxValue = 90
+        offsetStepper.increment = 0.5
+        offsetStepper.target = self
+        offsetStepper.action = #selector(onOffsetStepperChanged)
+        offsetValueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+        offsetRow.addArrangedSubview(offsetStepper)
+        offsetRow.addArrangedSubview(offsetValueLabel)
+        offsetStackView.addArrangedSubview(offsetRow)
+
+        offsetNoteLabel.font = NSFont.systemFont(ofSize: 11)
+        offsetNoteLabel.textColor = .secondaryLabelColor
+        offsetStackView.addArrangedSubview(offsetNoteLabel)
+        mainStackView.addArrangedSubview(offsetStackView)
+
+        // 8. Clear Cache Button
         let cacheStackView = NSStackView()
         cacheStackView.orientation = .horizontal
         cacheStackView.alignment = .centerY
@@ -200,6 +236,14 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
     override func viewDidLoad() {
         super.viewDidLoad()
         loadSavedPreferences()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(onVideoTrackChanged(_:)),
+            name: LyricOffsetStore.trackChangedNotification,
+            object: nil
+        )
+        offsetVideoId = UserDefaults.standard.string(forKey: LyricOffsetStore.lastVideoKey) ?? ""
+        updateOffsetSection()
     }
 
     private func loadSavedPreferences() {
@@ -327,6 +371,35 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
     @objc private func onTrackInfoCheckboxChanged() {
         let showTrackInfo = trackInfoCheckbox.state == .on
         UserDefaults.standard.set(showTrackInfo, forKey: Self.keyShowTrackInfo)
+    }
+
+    /// Refreshes the offset stepper when the playing video changes.
+    @objc private func onVideoTrackChanged(_ note: Notification) {
+        offsetVideoId = note.userInfo?["videoId"] as? String ?? ""
+        updateOffsetSection()
+    }
+
+    private func updateOffsetSection() {
+        let enabled = !offsetVideoId.isEmpty
+        offsetStepper.isEnabled = enabled
+        if enabled {
+            let value = offsetStore.offset(forVideoId: offsetVideoId)
+            offsetStepper.doubleValue = value
+            offsetValueLabel.stringValue = String(format: "%+.1fs", value)
+            offsetNoteLabel.stringValue = "Saved per YouTube video. + delays lyrics, − shows them earlier."
+        } else {
+            offsetValueLabel.stringValue = "—"
+            offsetNoteLabel.stringValue = "Play a YouTube video to adjust its lyric timing."
+        }
+    }
+
+    @objc private func onOffsetStepperChanged() {
+        guard !offsetVideoId.isEmpty else { return }
+        // Round to the 0.5s step to avoid float residue in storage.
+        let value = (offsetStepper.doubleValue * 2).rounded() / 2
+        offsetStore.setOffset(value, forVideoId: offsetVideoId)
+        offsetValueLabel.stringValue = String(format: "%+.1fs", value)
+        NotificationCenter.default.post(name: LyricOffsetStore.offsetChangedNotification, object: nil)
     }
 
     @objc private func onClearCacheTapped() {
