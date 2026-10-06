@@ -334,7 +334,7 @@ final class BrowserTabPoller {
         guard let context = readCaptionContext(tab: tab),
               let choice = YouTubeCaptionsClient.chooseTrack(from: context.tracks) else { return nil }
 
-        runPageScript(captureHookJS, tab: tab)
+        _ = runPageScript(captureHookJS, tab: tab)
         setCaptionsEnabled(false, tab: tab)
         Thread.sleep(forTimeInterval: 0.7)
         setCaptionsEnabled(true, tab: tab)
