@@ -217,6 +217,21 @@ struct YouTubeBrowserTests {
                 (track: makeBrowserTrack(title: "Second", playing: true), audible: nil as Bool?),
             ])?.title, "First", "ties keep poll order")
 
+        // ─── Group 7: extractVideoId ───────────────────────────────
+
+        print("\nGroup 7: BrowserTabPoller.extractVideoId")
+
+        checkEqual(BrowserTabPoller.extractVideoId(from: "https://www.youtube.com/watch?v=dQw4w9WgXcQ"), "dQw4w9WgXcQ", "watch URL")
+        checkEqual(BrowserTabPoller.extractVideoId(from: "https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=RDxyz&start_radio=1"), "dQw4w9WgXcQ", "watch URL with playlist params")
+        checkEqual(BrowserTabPoller.extractVideoId(from: "https://youtu.be/dQw4w9WgXcQ"), "dQw4w9WgXcQ", "short share URL")
+        checkEqual(BrowserTabPoller.extractVideoId(from: "https://www.youtube.com/shorts/dQw4w9WgXcQ"), "dQw4w9WgXcQ", "Shorts URL")
+        checkEqual(BrowserTabPoller.extractVideoId(from: "https://www.youtube.com/live/dQw4w9WgXcQ"), "dQw4w9WgXcQ", "live URL")
+        checkEqual(BrowserTabPoller.extractVideoId(from: "https://www.youtube.com/embed/dQw4w9WgXcQ"), "dQw4w9WgXcQ", "embed URL")
+        checkEqual(BrowserTabPoller.extractVideoId(from: "https://music.youtube.com/watch?v=dQw4w9WgXcQ"), "dQw4w9WgXcQ", "YouTube Music URL")
+        check(BrowserTabPoller.extractVideoId(from: "https://www.youtube.com/") == nil, "home page has no ID")
+        check(BrowserTabPoller.extractVideoId(from: "https://www.youtube.com/@LinkinPark") == nil, "channel page has no ID")
+        check(BrowserTabPoller.extractVideoId(from: "not a url") == nil, "garbage has no ID")
+
         print("\n══════════════════════════════════════════════════════")
         print("RESULTS: \(passCount) PASSED, \(failCount) FAILED")
         print("══════════════════════════════════════════════════════")

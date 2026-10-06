@@ -94,6 +94,12 @@ class LyricsWidget: NSObject, PKWidget {
     private let lrclibClient = LRCLIBClient()
     private let lyricsCache = LyricsCache()
     private let albumArtService = AlbumArtService()
+    /// Closed-caption fallback for YouTube tracks. Reaches back into the
+    /// browser through the watcher (never around it).
+    private lazy var captionsClient = YouTubeCaptionsClient(fetchCaptionJSON: { [weak self] videoId in
+        guard let self else { return nil }
+        return await self.nowPlayingWatcher.fetchYouTubeCaptions(videoId: videoId)
+    })
 
     // MARK: - Widget State & Race Condition Fencing
 
@@ -446,14 +452,32 @@ class LyricsWidget: NSObject, PKWidget {
                     self.activeLines = []
 
                 case .notFound:
-                    cachedEntry = CachedLyrics(
-                        lrclibID: nil,
-                        trackKey: expectedKey,
-                        lyricsState: .notFound,
-                        cachedAt: Date()
-                    )
-                    newState = .noLyricsFound(title: track.title, artist: track.artist)
-                    self.activeLines = []
+                    // Last resort for YouTube tracks: closed captions from
+                    // the video itself (LRCLIB-first ordering per product
+                    // decision — captions are speech-segmented, not
+                    // song-structured). Cached as synced lines on success.
+                    if let videoId = track.videoId,
+                       !Task.isCancelled, self.activeTrackKey == expectedKey,
+                       let captions = await self.captionsClient.fetchLyrics(videoId: videoId),
+                       !captions.lines.isEmpty {
+                        cachedEntry = CachedLyrics(
+                            lrclibID: nil,
+                            trackKey: expectedKey,
+                            lyricsState: .synced(lines: captions.lines, rawLRC: captions.rawLRC),
+                            cachedAt: Date()
+                        )
+                        newState = .synced(title: track.title, artist: track.artist, lines: captions.lines)
+                        self.activeLines = captions.lines
+                    } else {
+                        cachedEntry = CachedLyrics(
+                            lrclibID: nil,
+                            trackKey: expectedKey,
+                            lyricsState: .notFound,
+                            cachedAt: Date()
+                        )
+                        newState = .noLyricsFound(title: track.title, artist: track.artist)
+                        self.activeLines = []
+                    }
                 }
 
                 // Final check before committing state
