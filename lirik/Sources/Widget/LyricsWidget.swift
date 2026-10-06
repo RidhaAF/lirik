@@ -774,6 +774,8 @@ class LyricsWidget: NSObject, PKWidget {
     // MARK: - Album Art Fetching
 
     /// Fetches album artwork for the given track and displays it in the thumbnail.
+    /// YouTube tracks use the video thumbnail (square-cropped 1:1) since they
+    /// carry no album metadata; everything else uses the iTunes lookup.
     /// Skips fetch if the "Show album artwork" preference is disabled.
     private func fetchAlbumArt(for track: NowPlayingTrack) {
         let defaults = UserDefaults.standard
@@ -791,10 +793,18 @@ class LyricsWidget: NSObject, PKWidget {
         Task { [weak self] in
             guard let self else { return }
 
-            let image = await self.albumArtService.fetchArtwork(
-                artist: track.artist,
-                album: track.album
-            )
+            var image: NSImage?
+            if track.source == .browser, let videoId = track.videoId {
+                image = await self.albumArtService.fetchYouTubeThumbnail(videoId: videoId)
+                if image == nil {
+                    image = await self.albumArtService.fetchArtwork(artist: track.artist, album: track.album)
+                }
+            } else {
+                image = await self.albumArtService.fetchArtwork(
+                    artist: track.artist,
+                    album: track.album
+                )
+            }
 
             // Guard against stale results (track may have changed during fetch)
             guard self.nowPlayingWatcher.currentTrack?.isSameTrack(as: track) == true else {

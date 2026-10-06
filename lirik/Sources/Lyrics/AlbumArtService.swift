@@ -12,7 +12,8 @@ import Foundation
 import AppKit
 import CryptoKit
 
-/// Fetches and caches album artwork from the iTunes Search API.
+/// Fetches and caches album artwork from the iTunes Search API,
+/// plus YouTube video thumbnails (square-cropped) for browser tracks.
 final class AlbumArtService: @unchecked Sendable {
 
     // MARK: - Cache
@@ -28,13 +29,20 @@ final class AlbumArtService: @unchecked Sendable {
     private var inFlight: [String: Task<NSImage?, Never>] = [:]
     private let lock = NSLock()
 
+    private let session: URLSession
+
     // MARK: - Init
 
-    init() {
-        let userCaches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
-        self.diskCacheDir = userCaches
-            .appendingPathComponent("io.github.ridhaaf.lirik", isDirectory: true)
-            .appendingPathComponent("artwork", isDirectory: true)
+    init(session: URLSession = .shared, directoryURL: URL? = nil) {
+        self.session = session
+        if let directoryURL {
+            self.diskCacheDir = directoryURL
+        } else {
+            let userCaches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+            self.diskCacheDir = userCaches
+                .appendingPathComponent("io.github.ridhaaf.lirik", isDirectory: true)
+                .appendingPathComponent("artwork", isDirectory: true)
+        }
         try? FileManager.default.createDirectory(at: diskCacheDir, withIntermediateDirectories: true)
 
         memoryCache.countLimit = 30 // Keep last 30 artworks in memory
@@ -144,7 +152,7 @@ final class AlbumArtService: @unchecked Sendable {
 
         let searchData: Data
         do {
-            let (data, response) = try await URLSession.shared.data(from: searchURL)
+            let (data, response) = try await session.data(from: searchURL)
             guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
                 return nil
             }
@@ -177,7 +185,7 @@ final class AlbumArtService: @unchecked Sendable {
 
         // Download
         do {
-            let (imageData, _) = try await URLSession.shared.data(from: artworkURL)
+            let (imageData, _) = try await session.data(from: artworkURL)
             guard let image = NSImage(data: imageData) else { return nil }
             let resized = resizeImage(image, to: NSSize(width: 60, height: 60))
             saveToDisk(key: cacheKey, image: resized)
@@ -186,6 +194,96 @@ final class AlbumArtService: @unchecked Sendable {
             NSLog("[AlbumArtService] Image download failed: \(error.localizedDescription)")
             return nil
         }
+    }
+
+    // MARK: - YouTube thumbnails
+
+    /// Builds the thumbnail URLs for a video, best quality first.
+    /// maxres doesn't exist for older/low-res uploads (404s), so callers
+    /// must fall through the list. Pure function for testability.
+    static func thumbnailURLs(forVideoId videoId: String) -> [URL] {
+        ["maxresdefault", "sddefault", "hqdefault"].compactMap {
+            URL(string: "https://i.ytimg.com/vi/\(videoId)/\($0).jpg")
+        }
+    }
+
+    /// Fetches a video thumbnail, square-cropped 1:1 for the Touch Bar
+    /// thumbnail view. Falls through qualities until one decodes as an
+    /// image; returns nil when all fail (deleted/private video, offline).
+    /// Shares the memory/disk/in-flight caches under a "yt:" key prefix.
+    func fetchYouTubeThumbnail(videoId: String) async -> NSImage? {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
+        guard !videoId.isEmpty, videoId.rangeOfCharacter(from: allowed.inverted) == nil else { return nil }
+
+        let key = "yt:\(videoId)"
+
+        if let cached = memoryCache.object(forKey: key as NSString) {
+            return cached
+        }
+        if let diskImage = loadFromDisk(key: key) {
+            memoryCache.setObject(diskImage, forKey: key as NSString)
+            return diskImage
+        }
+
+        lock.lock()
+        if let existing = inFlight[key] {
+            lock.unlock()
+            return await existing.value
+        }
+        let task = Task<NSImage?, Never> { [weak self] in
+            await self?.performThumbnailFetch(videoId: videoId, key: key)
+        }
+        inFlight[key] = task
+        lock.unlock()
+
+        let image = await task.value
+
+        lock.lock()
+        inFlight.removeValue(forKey: key)
+        lock.unlock()
+
+        if let image {
+            memoryCache.setObject(image, forKey: key as NSString)
+        }
+        return image
+    }
+
+    /// Downloads the first working quality, center-crops to a 1:1 square
+    /// (thumbnails are 16:9 and would squash under plain resize), scales
+    /// to thumbnail size, and persists to disk.
+    private func performThumbnailFetch(videoId: String, key: String) async -> NSImage? {
+        for url in Self.thumbnailURLs(forVideoId: videoId) {
+            guard let (data, response) = try? await session.data(from: url),
+                  let http = response as? HTTPURLResponse, http.statusCode == 200,
+                  let image = NSImage(data: data),
+                  image.size.width > 0, image.size.height > 0 else {
+                continue
+            }
+            let squared = resizeImage(Self.cropToSquare(image), to: NSSize(width: 60, height: 60))
+            saveToDisk(key: key, image: squared)
+            return squared
+        }
+        NSLog("[AlbumArtService] No thumbnail for videoId='\(videoId)'")
+        return nil
+    }
+
+    /// Center-crops any aspect ratio to a 1:1 square.
+    static func cropToSquare(_ image: NSImage) -> NSImage {
+        let side = min(image.size.width, image.size.height)
+        guard side > 0 else { return image }
+        let crop = NSRect(
+            x: (image.size.width - side) / 2,
+            y: (image.size.height - side) / 2,
+            width: side,
+            height: side
+        )
+        let squared = NSImage(size: NSSize(width: side, height: side))
+        squared.lockFocus()
+        NSGraphicsContext.current?.imageInterpolation = .high
+        image.draw(in: NSRect(origin: .zero, size: squared.size),
+                   from: crop, operation: .copy, fraction: 1.0)
+        squared.unlockFocus()
+        return squared
     }
 
     // MARK: - Disk cache
