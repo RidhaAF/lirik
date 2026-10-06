@@ -129,7 +129,8 @@ final class BrowserTabPoller {
                 duration: duration,
                 elapsedTime: max(0, position.elapsed),
                 isPlaying: position.isPlaying,
-                source: .browser
+                source: .browser,
+                videoId: found.videoId
             )
             return (track, found.audible)
         }
@@ -141,7 +142,8 @@ final class BrowserTabPoller {
             duration: nil,
             elapsedTime: nil,
             isPlaying: true,
-            source: .browser
+            source: .browser,
+            videoId: found.videoId
         )
         return (track, found.audible)
     }
@@ -158,7 +160,7 @@ final class BrowserTabPoller {
     ///
     /// When several YouTube tabs are open, an audible one wins — a muted
     /// background tab would otherwise shadow the video being watched.
-    private func findYouTubeTab(in browser: Browser) -> (title: String, windowIndex: Int, tabIndex: Int, audible: Bool?)? {
+    private func findYouTubeTab(in browser: Browser) -> (title: String, windowIndex: Int, tabIndex: Int, audible: Bool?, videoId: String?)? {
         let titleProperty = browser == .safari ? "name" : "title"
         let audibleQuery: String
         switch browser {
@@ -212,7 +214,41 @@ final class BrowserTabPoller {
         case "false": audible = false
         default: audible = nil
         }
-        return (title, windowIndex, tabIndex, audible)
+        // The tab URL doubles as the captions source key: videoId travels on
+        // the track so LyricsWidget can attempt the closed-caption fallback.
+        let tabURL = parts[0].trimmingCharacters(in: .whitespacesAndNewlines)
+        return (title, windowIndex, tabIndex, audible, Self.extractVideoId(from: tabURL))
+    }
+
+    // MARK: - Video ID extraction (unit-testable, no browser needed)
+
+    /// Extracts the 11-character YouTube video ID from watch, share, Shorts,
+    /// live, embed, and YouTube Music URLs. Returns nil when no ID is found.
+    static func extractVideoId(from urlString: String) -> String? {
+        guard let url = URL(string: urlString),
+              let host = url.host?.lowercased() else { return nil }
+
+        if host.hasSuffix("youtu.be") {
+            let id = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                .components(separatedBy: "/").first ?? ""
+            return id.isEmpty ? nil : id
+        }
+
+        guard host.contains("youtube.com") || host.contains("music.youtube.com") else { return nil }
+
+        if let components = URLComponents(string: urlString),
+           let id = components.queryItems?.first(where: { $0.name == "v" })?.value,
+           !id.isEmpty {
+            return id
+        }
+
+        // Path forms: /shorts/ID, /live/ID, /embed/ID (first segment checked
+        // so channel/custom paths like /@user never match).
+        let segments = url.path.components(separatedBy: "/").filter { !$0.isEmpty }
+        if segments.count >= 2 && ["shorts", "live", "embed"].contains(segments[0].lowercased()) {
+            return segments[1].isEmpty ? nil : segments[1]
+        }
+        return nil
     }
 
     /// Reads currentTime/duration/paused from the tab's <video> element.

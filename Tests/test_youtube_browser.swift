@@ -135,10 +135,10 @@ struct YouTubeBrowserTests {
 
         print("\nGroup 4: NowPlayingTrack.isSameTrack (source-aware)")
 
-        let spotifyTrack = NowPlayingTrack(title: "Anti-Hero", artist: "Taylor Swift", album: nil, duration: 200, elapsedTime: 10, isPlaying: true, source: .spotify)
-        let browserTrack = NowPlayingTrack(title: "Anti-Hero", artist: "Taylor Swift", album: nil, duration: 234, elapsedTime: 10, isPlaying: true, source: .browser)
-        let spotifyLater = NowPlayingTrack(title: "Anti-Hero", artist: "Taylor Swift", album: nil, duration: 200, elapsedTime: 90, isPlaying: true, source: .spotify)
-        let otherSong = NowPlayingTrack(title: "Shake It Off", artist: "Taylor Swift", album: nil, duration: 200, elapsedTime: 0, isPlaying: true, source: .spotify)
+        let spotifyTrack = NowPlayingTrack(title: "Anti-Hero", artist: "Taylor Swift", album: nil, duration: 200, elapsedTime: 10, isPlaying: true, source: .spotify, videoId: nil)
+        let browserTrack = NowPlayingTrack(title: "Anti-Hero", artist: "Taylor Swift", album: nil, duration: 234, elapsedTime: 10, isPlaying: true, source: .browser, videoId: "dQw4w9WgXcQ")
+        let spotifyLater = NowPlayingTrack(title: "Anti-Hero", artist: "Taylor Swift", album: nil, duration: 200, elapsedTime: 90, isPlaying: true, source: .spotify, videoId: nil)
+        let otherSong = NowPlayingTrack(title: "Shake It Off", artist: "Taylor Swift", album: nil, duration: 200, elapsedTime: 0, isPlaying: true, source: .spotify, videoId: nil)
 
         check(!spotifyTrack.isSameTrack(as: browserTrack), "same song on Spotify vs YouTube counts as track change")
         check(spotifyTrack.isSameTrack(as: spotifyLater), "elapsed-time update on same source is not a change")
@@ -198,7 +198,7 @@ struct YouTubeBrowserTests {
         print("\nGroup 6: BrowserTabPoller.selectBest (audible ranking)")
 
         func makeBrowserTrack(title: String, playing: Bool) -> NowPlayingTrack {
-            NowPlayingTrack(title: title, artist: "A", album: nil, duration: nil, elapsedTime: nil, isPlaying: playing, source: .browser)
+            NowPlayingTrack(title: title, artist: "A", album: nil, duration: nil, elapsedTime: nil, isPlaying: playing, source: .browser, videoId: nil)
         }
 
         let mutedPlaying = (track: makeBrowserTrack(title: "Muted", playing: true), audible: false as Bool?)

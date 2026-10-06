@@ -201,7 +201,8 @@ final class AppleScriptBackend {
             duration: duration,
             elapsedTime: elapsed,
             isPlaying: stateStr == "playing",
-            source: .spotify
+            source: .spotify,
+            videoId: nil
         )
     }
 
@@ -245,7 +246,8 @@ final class AppleScriptBackend {
             duration: duration,
             elapsedTime: elapsed,
             isPlaying: stateStr == "playing",
-            source: .appleMusic
+            source: .appleMusic,
+            videoId: nil
         )
     }
 

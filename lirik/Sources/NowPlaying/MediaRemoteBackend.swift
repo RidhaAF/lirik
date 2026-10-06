@@ -275,7 +275,8 @@ final class MediaRemoteBackend {
             duration: duration,
             elapsedTime: elapsed,
             isPlaying: playbackRate > 0,
-            source: .unknown // MediaRemote doesn't reliably expose which app is playing
+            source: .unknown, // MediaRemote doesn't reliably expose which app is playing
+            videoId: nil
         )
     }
 }

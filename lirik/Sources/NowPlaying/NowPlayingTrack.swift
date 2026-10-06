@@ -27,6 +27,9 @@ struct NowPlayingTrack: Sendable, Equatable {
     let elapsedTime: TimeInterval?
     let isPlaying: Bool
     let source: NowPlayingSource
+    /// YouTube video ID for browser tracks (used for the closed-caption
+    /// lyrics fallback). nil for Spotify / Apple Music / MediaRemote.
+    let videoId: String?
 
     /// Two tracks represent the "same song" if title, artist, and source match,
     /// regardless of elapsed time or playback state. Used to detect
