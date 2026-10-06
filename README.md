@@ -13,7 +13,7 @@
 - **Smart Track Sanitization**: Automatically cleans track titles (strips `(Remastered)`, `[feat.]`, `- Live`) for **30%+ higher lyric match rates**.
 - **Tap-to-Copy Touch Bar Gesture**: Tap any active lyric on your Touch Bar to instantly copy the text to your macOS clipboard.
 - **Auto-Advancing Plain-Text Fallback**: Progressively steps through static lyrics if time-synced LRC lyrics are unavailable.
-- **Album Artwork Thumbnail**: Displays album cover art alongside lyrics on the Touch Bar.
+- **Album Artwork Thumbnail**: Displays album cover art alongside lyrics on the Touch Bar. YouTube videos show the square-cropped video thumbnail.
 - **Song Title & Artist Display**: Shows song title and artist name (with featuring info) when a track changes, karaoke-style.
 - **Customizable Preferences**:
   - **Display Mode**: Choose between **2-Line Karaoke** or **1-Line Compact** mode.

@@ -11,6 +11,7 @@ All notable changes to Lirik are documented in this file. The format is based on
 - Closed-caption fallback: when LRCLIB has no match for a YouTube video, lyrics come from the video's own captions (English-first), briefly cycling CC to capture them
 - MV-timeline auto-calibration: album-timed lines shift to match dialogue-intro music videos using captions as ground truth
 - Manual per-video timing offset stepper in preferences for videos that can't auto-calibrate
+- YouTube video thumbnails as Touch Bar artwork (square-cropped 1:1, best quality available)
 
 ### Fixed
 - Music Player Source preference is now actually honored when polling (previously write-only)
