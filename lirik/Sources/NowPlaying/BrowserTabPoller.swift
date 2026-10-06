@@ -72,39 +72,57 @@ final class BrowserTabPoller {
 
     // MARK: - Public API
 
-    /// Returns the first YouTube track found across supported browsers.
-    /// When several browsers have YouTube tabs, a tab whose video reports
-    /// playing wins over paused ones; otherwise the first paused tab is
-    /// returned so the widget still shows *something* instead of nothing.
+    /// Returns the best YouTube track across supported browsers.
+    /// Ranking: an audibly-playing tab wins (a background tab can report
+    /// playing while muted — e.g. autoplay or an ad), then playing tabs
+    /// with unknown audibility (Safari doesn't expose it), then muted
+    /// playing tabs, and finally the first paused tab so the widget still
+    /// shows *something* instead of nothing.
     func queryYouTube() -> NowPlayingTrack? {
-        var pausedFallback: NowPlayingTrack?
+        var candidates: [(track: NowPlayingTrack, audible: Bool?)] = []
         for browser in Browser.allCases {
             guard isAppRunning(bundleIdentifier: browser.bundleIdentifier) else { continue }
-            guard let track = queryBrowser(browser) else { continue }
-            if track.isPlaying {
-                return track
-            }
-            if pausedFallback == nil {
-                pausedFallback = track
+            if let hit = queryBrowser(browser) {
+                candidates.append(hit)
             }
         }
-        return pausedFallback
+        return Self.selectBest(from: candidates)
+    }
+
+    /// Picks the winning track from per-browser candidates, in poll order.
+    /// Pure function so the ranking is unit-testable without browsers.
+    static func selectBest(from candidates: [(track: NowPlayingTrack, audible: Bool?)]) -> NowPlayingTrack? {
+        func rank(audible: Bool?, isPlaying: Bool) -> Int {
+            guard isPlaying else { return 3 }
+            switch audible {
+            case true: return 0
+            case nil: return 1
+            case false: return 2
+            }
+        }
+        return candidates
+            .enumerated()
+            .min { rank(audible: $0.element.audible, isPlaying: $0.element.track.isPlaying) < rank(audible: $1.element.audible, isPlaying: $1.element.track.isPlaying) }
+            .map { $0.element.track }
     }
 
     // MARK: - Per-browser query
 
     /// Finds the YouTube tab in one browser and reads its video position.
-    private func queryBrowser(_ browser: Browser) -> NowPlayingTrack? {
+    /// Returns the track plus whether the tab is audibly producing sound
+    /// (nil when the browser doesn't expose it — Safari has no AppleScript
+    /// audible property — used by selectBest to rank candidates).
+    private func queryBrowser(_ browser: Browser) -> (track: NowPlayingTrack, audible: Bool?)? {
         guard let found = findYouTubeTab(in: browser) else { return nil }
 
         let (artist, title) = Self.splitArtistTitle(from: found.title)
         guard !title.isEmpty else { return nil }
 
-        // Position query is best-effort: without it (Safari JS toggle off,
+        // Position query is best-effort: without it (JS toggle off,
         // CSP quirks) we still return the track so static lyrics can show.
         if let position = readVideoPosition(in: browser, window: found.windowIndex, tab: found.tabIndex) {
             let duration: TimeInterval? = position.duration > 0 ? position.duration : nil
-            return NowPlayingTrack(
+            let track = NowPlayingTrack(
                 title: title,
                 artist: artist,
                 album: nil,
@@ -113,9 +131,10 @@ final class BrowserTabPoller {
                 isPlaying: position.isPlaying,
                 source: .browser
             )
+            return (track, found.audible)
         }
 
-        return NowPlayingTrack(
+        let track = NowPlayingTrack(
             title: title,
             artist: artist,
             album: nil,
@@ -124,19 +143,43 @@ final class BrowserTabPoller {
             isPlaying: true,
             source: .browser
         )
+        return (track, found.audible)
     }
 
-    /// Locates the first YouTube watch tab in a browser.
-    /// Returns the tab title plus window/tab indices for the position query.
+    /// Locates the first YouTube tab in a browser.
+    /// Returns the tab title, window/tab indices for the position query,
+    /// and audibility (Chrome/Edge expose `audible` per tab; Safari does
+    /// not, so it always returns nil there).
     ///
     /// Matches watch, Shorts, youtu.be shares, live streams, and YouTube
     /// Music — all of which render a <video> element the position probe
     /// can read. Plain youtube.com home/channel pages are excluded since
     /// they carry no single playable track.
-    private func findYouTubeTab(in browser: Browser) -> (title: String, windowIndex: Int, tabIndex: Int)? {
+    ///
+    /// When several YouTube tabs are open, an audible one wins — a muted
+    /// background tab would otherwise shadow the video being watched.
+    private func findYouTubeTab(in browser: Browser) -> (title: String, windowIndex: Int, tabIndex: Int, audible: Bool?)? {
         let titleProperty = browser == .safari ? "name" : "title"
+        let audibleQuery: String
+        switch browser {
+        case .safari:
+            audibleQuery = "set audStr to \"unknown\""
+        case .chrome, .edge:
+            audibleQuery = """
+            try
+                if audible of tab t of window w then
+                    set audStr to "true"
+                else
+                    set audStr to "false"
+                end if
+            on error
+                set audStr to "unknown"
+            end try
+            """
+        }
         let script = """
         tell application "\(browser.scriptName)"
+            set firstSilent to ""
             repeat with w from 1 to (count of windows)
                 repeat with t from 1 to (count of tabs of window w)
                     try
@@ -146,22 +189,30 @@ final class BrowserTabPoller {
                     end try
                     if tabURL contains "youtube.com/watch" or tabURL contains "youtube.com/shorts/" or tabURL contains "youtube.com/live/" or tabURL contains "youtu.be/" or tabURL contains "music.youtube.com" then
                         set tabTitle to \(titleProperty) of tab t of window w
-                        return tabURL & "|||" & tabTitle & "|||" & w & "|||" & t
+        \(audibleQuery)
+                        if audStr is "true" then return tabURL & "|||" & tabTitle & "|||" & w & "|||" & t & "|||true"
+                        if firstSilent is "" then set firstSilent to tabURL & "|||" & tabTitle & "|||" & w & "|||" & t & "|||" & audStr
                     end if
                 end repeat
             end repeat
-            return ""
+            return firstSilent
         end tell
         """
 
         guard let output = runAppleScript(script, browser: browser) else { return nil }
         let parts = output.components(separatedBy: "|||")
-        guard parts.count >= 4,
+        guard parts.count >= 5,
               let windowIndex = Int(parts[2].trimmingCharacters(in: .whitespaces)),
               let tabIndex = Int(parts[3].trimmingCharacters(in: .whitespaces)) else { return nil }
         let title = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { return nil }
-        return (title, windowIndex, tabIndex)
+        let audible: Bool?
+        switch parts[4].trimmingCharacters(in: .whitespacesAndNewlines) {
+        case "true": audible = true
+        case "false": audible = false
+        default: audible = nil
+        }
+        return (title, windowIndex, tabIndex, audible)
     }
 
     /// Reads currentTime/duration/paused from the tab's <video> element.

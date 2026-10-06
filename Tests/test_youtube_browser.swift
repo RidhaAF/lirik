@@ -193,6 +193,30 @@ struct YouTubeBrowserTests {
             check(false, "unknown-artist lookup does not throw (threw: \(error))")
         }
 
+        // ─── Group 6: selectBest audible ranking ───────────────────
+
+        print("\nGroup 6: BrowserTabPoller.selectBest (audible ranking)")
+
+        func makeBrowserTrack(title: String, playing: Bool) -> NowPlayingTrack {
+            NowPlayingTrack(title: title, artist: "A", album: nil, duration: nil, elapsedTime: nil, isPlaying: playing, source: .browser)
+        }
+
+        let mutedPlaying = (track: makeBrowserTrack(title: "Muted", playing: true), audible: false as Bool?)
+        let unknownPlaying = (track: makeBrowserTrack(title: "Unknown", playing: true), audible: nil as Bool?)
+        let audiblePlaying = (track: makeBrowserTrack(title: "Audible", playing: true), audible: true as Bool?)
+        let paused = (track: makeBrowserTrack(title: "Paused", playing: false), audible: false as Bool?)
+
+        checkEqual(BrowserTabPoller.selectBest(from: [mutedPlaying, unknownPlaying, audiblePlaying])?.title, "Audible", "audible playing beats muted/unknown playing")
+        checkEqual(BrowserTabPoller.selectBest(from: [mutedPlaying, unknownPlaying])?.title, "Unknown", "unknown-audible playing beats muted playing")
+        checkEqual(BrowserTabPoller.selectBest(from: [mutedPlaying, paused])?.title, "Muted", "muted playing still beats paused")
+        checkEqual(BrowserTabPoller.selectBest(from: [paused])?.title, "Paused", "lone paused tab returned as fallback")
+        check(BrowserTabPoller.selectBest(from: []) == nil, "no candidates returns nil")
+        checkEqual(
+            BrowserTabPoller.selectBest(from: [
+                (track: makeBrowserTrack(title: "First", playing: true), audible: nil as Bool?),
+                (track: makeBrowserTrack(title: "Second", playing: true), audible: nil as Bool?),
+            ])?.title, "First", "ties keep poll order")
+
         print("\n══════════════════════════════════════════════════════")
         print("RESULTS: \(passCount) PASSED, \(failCount) FAILED")
         print("══════════════════════════════════════════════════════")
