@@ -39,6 +39,8 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
     static let keyShowAlbumArt = "io.github.ridhaaf.lirik.showAlbumArt"
     static let keyAlbumArtSize = "io.github.ridhaaf.lirik.albumArtSize"
     static let keyShowTrackInfo = "io.github.ridhaaf.lirik.showTrackInfo"
+    /// Seconds added to playback time before syncing; positive shows lyrics earlier.
+    static let keyLyricsOffset = "io.github.ridhaaf.lirik.lyricsOffset"
 
     // MARK: - UI Controls
 
@@ -52,6 +54,8 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
     private let albumArtCheckbox = NSButton(checkboxWithTitle: "Show album artwork thumbnail", target: nil, action: nil)
     private let albumArtSizeControl = NSSegmentedControl(labels: ["Small", "Medium", "Large"], trackingMode: .selectOne, target: nil, action: nil)
     private let trackInfoCheckbox = NSButton(checkboxWithTitle: "Show song title & artist when track changes", target: nil, action: nil)
+    private let offsetStepper = NSStepper()
+    private let offsetLabel = NSTextField(labelWithString: "")
     private let clearCacheButton = NSButton(title: "Clear Cached Lyrics", target: nil, action: nil)
     private let cacheStatusLabel = NSTextField(labelWithString: "")
 
@@ -144,6 +148,26 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
 
         mainStackView.addArrangedSubview(trackInfoCheckbox)
 
+        // Lyrics Timing Offset
+        let offsetStackView = NSStackView()
+        offsetStackView.orientation = .vertical
+        offsetStackView.alignment = .leading
+        offsetStackView.spacing = 4
+        let offsetTitle = NSTextField(labelWithString: "Lyrics Timing Offset:")
+        offsetTitle.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        offsetStepper.minValue = -5
+        offsetStepper.maxValue = 5
+        offsetStepper.increment = 0.25
+        offsetStepper.valueWraps = false
+        offsetStepper.target = self
+        offsetStepper.action = #selector(onOffsetChanged)
+        offsetLabel.font = NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+        let offsetRow = NSStackView(views: [offsetLabel, offsetStepper])
+        offsetRow.spacing = 6
+        offsetStackView.addArrangedSubview(offsetTitle)
+        offsetStackView.addArrangedSubview(offsetRow)
+        mainStackView.addArrangedSubview(offsetStackView)
+
         // 7. Clear Cache Button
         let cacheStackView = NSStackView()
         cacheStackView.orientation = .horizontal
@@ -189,7 +213,7 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
         trackInfoCheckbox.target = self
         trackInfoCheckbox.action = #selector(onTrackInfoCheckboxChanged)
 
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 380, height: 520))
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 380, height: 580))
         mainStackView.frame = container.bounds
         mainStackView.autoresizingMask = [.width, .height]
         container.addSubview(mainStackView)
@@ -254,6 +278,20 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
 
         let showTrackInfo = defaults.object(forKey: Self.keyShowTrackInfo) as? Bool ?? false
         trackInfoCheckbox.state = showTrackInfo ? .on : .off
+
+        offsetStepper.doubleValue = defaults.double(forKey: Self.keyLyricsOffset)
+        updateOffsetLabel()
+    }
+
+    private func updateOffsetLabel() {
+        let offset = offsetStepper.doubleValue
+        let direction = offset > 0 ? " · lyrics earlier" : offset < 0 ? " · lyrics later" : ""
+        offsetLabel.stringValue = String(format: "%+.2f s", offset) + direction
+    }
+
+    @objc private func onOffsetChanged() {
+        UserDefaults.standard.set(offsetStepper.doubleValue, forKey: Self.keyLyricsOffset)
+        updateOffsetLabel()
     }
 
     @objc private func onDualLineChanged() {
@@ -345,6 +383,7 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
         UserDefaults.standard.set(false, forKey: Self.keyShowTrackInfo)
         UserDefaults.standard.set("white", forKey: Self.keyHighlightColor)
         UserDefaults.standard.set("left", forKey: Self.keyAlignment)
+        UserDefaults.standard.set(0.0, forKey: Self.keyLyricsOffset)
         loadSavedPreferences()
     }
 }

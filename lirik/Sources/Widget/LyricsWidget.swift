@@ -349,7 +349,7 @@ class LyricsWidget: NSObject, PKWidget {
                 self.isCurrentlyPaused = !track.isPlaying
 
                 if case .synced(_, _, let lines) = self.uiState {
-                    let snapshot = LRCSyncEngine.resolve(elapsedTime: elapsed, lines: lines)
+                    let snapshot = LRCSyncEngine.resolve(elapsedTime: self.offsetElapsed(elapsed), lines: lines)
                     self.renderSyncSnapshot(snapshot, isPaused: !track.isPlaying)
                 } else if case .staticOnly(_, _, let text) = self.uiState {
                     self.renderStaticLyrics(text, elapsed: elapsed, trackDuration: track.duration, isPaused: !track.isPlaying)
@@ -362,6 +362,11 @@ class LyricsWidget: NSObject, PKWidget {
 
     /// Observes realtime preference changes (e.g. album art toggle) to update the widget immediately
     /// without waiting for the next track change.
+    /// Playback time shifted by the user's lyrics offset (positive = lyrics earlier).
+    private func offsetElapsed(_ elapsed: TimeInterval) -> TimeInterval {
+        elapsed + UserDefaults.standard.double(forKey: LirikPreferenceViewController.keyLyricsOffset)
+    }
+
     private func observePreferenceChanges() {
         NotificationCenter.default.addObserver(
             self,
@@ -521,7 +526,7 @@ class LyricsWidget: NSObject, PKWidget {
                 nextLineLabel.stringValue = ""
             } else {
                 let elapsed = nowPlayingWatcher.currentTrack?.elapsedTime ?? 0
-                let snapshot = LRCSyncEngine.resolve(elapsedTime: elapsed, lines: lines)
+                let snapshot = LRCSyncEngine.resolve(elapsedTime: self.offsetElapsed(elapsed), lines: lines)
                 renderSyncSnapshot(snapshot, isPaused: isCurrentlyPaused)
             }
         }
