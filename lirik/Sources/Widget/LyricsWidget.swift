@@ -108,6 +108,9 @@ class LyricsWidget: NSObject, PKWidget {
         }
     }
 
+    /// Widest the widget may get; see the width cap in setupUI.
+    private static let maxWidgetWidth: CGFloat = 340
+
     private var activeLines: [LRCLine] = []
     private var isCurrentlyPaused: Bool = false
 
@@ -274,6 +277,11 @@ class LyricsWidget: NSObject, PKWidget {
         // Prevent widget from resizing when lyrics change length
         containerView.translatesAutoresizingMaskIntoConstraints = false
         containerView.widthAnchor.constraint(greaterThanOrEqualToConstant: 280).isActive = true
+        // Labels otherwise size to the full lyric line; once that exceeds the
+        // space Pock has left, the Touch Bar hides the whole item (blank gap
+        // mid-song). Capping width makes long lines truncate instead.
+        // ponytail: fixed cap fits the space beside DevPulse + Control Strip (~377pt); make it a preference if layouts vary.
+        containerView.widthAnchor.constraint(lessThanOrEqualToConstant: Self.maxWidgetWidth).isActive = true
 
         self.view = containerView
     }
@@ -585,8 +593,6 @@ class LyricsWidget: NSObject, PKWidget {
         let showPauseIcon = defaults.object(forKey: LirikPreferenceViewController.keyShowPauseIcon) as? Bool ?? true
 
         applyTextAlignment()
-        currentLineLabel.font = NSFont.boldSystemFont(ofSize: CGFloat(fontSize))
-        nextLineLabel.font = NSFont.systemFont(ofSize: CGFloat(max(8, fontSize - 2)))
         nextLineLabel.isHidden = !dualLine
 
         let lines = text.components(separatedBy: .newlines)
@@ -613,6 +619,7 @@ class LyricsWidget: NSObject, PKWidget {
         setLineText(currentLineLabel, newText)
         previousCurrentLineText = newText
         nextLineLabel.stringValue = nextIndex != nil ? lines[nextIndex!] : ""
+        applyFittedFonts(baseSize: CGFloat(fontSize))
     }
 
     private func renderSyncSnapshot(_ snapshot: LRCSyncSnapshot, isPaused: Bool) {
@@ -634,8 +641,6 @@ class LyricsWidget: NSObject, PKWidget {
         let showPauseIcon = defaults.object(forKey: LirikPreferenceViewController.keyShowPauseIcon) as? Bool ?? true
 
         applyTextAlignment()
-        currentLineLabel.font = NSFont.boldSystemFont(ofSize: CGFloat(fontSize))
-        nextLineLabel.font = NSFont.systemFont(ofSize: CGFloat(max(8, fontSize - 2)))
         nextLineLabel.isHidden = !dualLine
 
         applyAlbumArtSize()
@@ -668,6 +673,7 @@ class LyricsWidget: NSObject, PKWidget {
         setLineText(currentLineLabel, newText)
         previousCurrentLineText = newText
         nextLineLabel.stringValue = upcoming
+        applyFittedFonts(baseSize: CGFloat(fontSize))
     }
 
     // MARK: - Album Art Fetching
@@ -725,6 +731,28 @@ class LyricsWidget: NSObject, PKWidget {
         let size = sizes[max(0, min(sizeIndex, sizes.count - 1))]
         albumArtWidthConstraint?.constant = size
         albumArtHeightConstraint?.constant = size
+    }
+
+    /// Shrinks each line's font (down to a floor) until its text fits the
+    /// capped widget width; anything still too long truncates with "…".
+    private func applyFittedFonts(baseSize: CGFloat) {
+        let artWidth = albumArtImageView.isHidden ? 0 : (albumArtWidthConstraint?.constant ?? 0) + containerView.spacing
+        let insets = containerView.edgeInsets.left + containerView.edgeInsets.right
+        let available = Self.maxWidgetWidth - insets - artWidth
+
+        func fitted(_ text: String, from size: CGFloat, floor: CGFloat, bold: Bool) -> NSFont {
+            var size = size
+            while true {
+                let font = bold ? NSFont.boldSystemFont(ofSize: size) : NSFont.systemFont(ofSize: size)
+                if size <= floor || (text as NSString).size(withAttributes: [.font: font]).width <= available {
+                    return font
+                }
+                size -= 0.5
+            }
+        }
+
+        currentLineLabel.font = fitted(currentLineLabel.stringValue, from: baseSize, floor: 8, bold: true)
+        nextLineLabel.font = fitted(nextLineLabel.stringValue, from: max(8, baseSize - 2), floor: 7, bold: false)
     }
 
     /// No animation on Touch Bar — Pock's DFR rendering pipeline
