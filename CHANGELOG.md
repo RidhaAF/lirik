@@ -2,6 +2,14 @@
 
 All notable changes to Lirik are documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+- **Long lyric lines no longer blank the widget** (#4, [@vadhh](https://github.com/vadhh)):
+  - Widget width is capped, so an over-long line makes the Touch Bar truncate it instead of dropping the whole item
+  - Line font steps down (floor 8pt current, 7pt next) until the text fits, then truncates
+  - The cap is a heuristic sized for one companion widget beside the Control Strip; a layout with less room still hides the item
+
 ## [1.3.1] — 2026-08-25
 
 ### Fixed
