@@ -280,7 +280,9 @@ class LyricsWidget: NSObject, PKWidget {
         // Labels otherwise size to the full lyric line; once that exceeds the
         // space Pock has left, the Touch Bar hides the whole item (blank gap
         // mid-song). Capping width makes long lines truncate instead.
-        // ponytail: fixed cap fits the space beside DevPulse + Control Strip (~377pt); make it a preference if layouts vary.
+        // The cap is a heuristic: it fits roughly one companion widget beside
+        // the Control Strip. A layout that leaves less room still hides the
+        // item, so this should become a preference if that is reported.
         containerView.widthAnchor.constraint(lessThanOrEqualToConstant: Self.maxWidgetWidth).isActive = true
 
         self.view = containerView
@@ -303,10 +305,13 @@ class LyricsWidget: NSObject, PKWidget {
 
         let previousText = currentLineLabel.stringValue
         currentLineLabel.stringValue = "📋 Copied to Clipboard!"
+        resetFontsToPreference()
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
             guard let self = self else { return }
             if self.currentLineLabel.stringValue == "📋 Copied to Clipboard!" {
                 self.currentLineLabel.stringValue = previousText
+                let fontSize = UserDefaults.standard.object(forKey: LirikPreferenceViewController.keyFontSize) as? Int ?? 11
+                self.applyFittedFonts(baseSize: CGFloat(fontSize))
             }
         }
     }
@@ -494,6 +499,10 @@ class LyricsWidget: NSObject, PKWidget {
     // MARK: - UI Rendering
 
     private func updateUI() {
+        // Non-lyric states do not run the fitted-font pass, so reset here or a
+        // shrunk line from the previous track leaks into "No lyrics available".
+        resetFontsToPreference()
+
         switch uiState {
         case .noTrackPlaying:
             currentLineLabel.stringValue = "Lirik"
@@ -731,6 +740,14 @@ class LyricsWidget: NSObject, PKWidget {
         let size = sizes[max(0, min(sizeIndex, sizes.count - 1))]
         albumArtWidthConstraint?.constant = size
         albumArtHeightConstraint?.constant = size
+    }
+
+    /// Restores the user's preferred font sizes. Used by states that do not
+    /// run the fitted-font pass.
+    private func resetFontsToPreference() {
+        let fontSize = UserDefaults.standard.object(forKey: LirikPreferenceViewController.keyFontSize) as? Int ?? 11
+        currentLineLabel.font = NSFont.boldSystemFont(ofSize: CGFloat(fontSize))
+        nextLineLabel.font = NSFont.systemFont(ofSize: CGFloat(max(8, fontSize - 2)))
     }
 
     /// Shrinks each line's font (down to a floor) until its text fits the
