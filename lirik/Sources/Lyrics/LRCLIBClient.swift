@@ -8,7 +8,7 @@
 
 import Foundation
 
-/// Explicit result of an LRCLIB lookup — handles "no match found" explicitly
+/// Explicit result of an LRCLIB lookup; handles "no match found" explicitly
 /// per prompt requirements, rather than throwing errors to be swallowed.
 enum LRCLIBResult: Sendable, Equatable {
     /// Synced LRC lyrics found.
@@ -119,7 +119,7 @@ final class LRCLIBClient: Sendable {
     ///
     /// Retry chain on 404, in order:
     /// 1. Sanitized title (strips remaster/live/YouTube noise).
-    /// 2. Swapped artist/title — YouTube tab titles come in both
+    /// 2. Swapped artist/title, YouTube tab titles come in both
     ///    "Artist - Title" and "Title - Artist" order, and music apps
     ///    occasionally mistag fields too. Skipped when the artist is the
     ///    "Unknown Artist" placeholder (nothing to swap with).

@@ -3,14 +3,14 @@
 //  lirik
 //
 //  Unit tests for the YouTube closed-caption lyrics fallback. Compiles
-//  against the REAL sources (not copies) — run with:
+//  against the REAL sources (not copies), run with:
 //    swiftc Tests/test_youtube_captions.swift \
 //      lirik/Sources/Lyrics/YouTubeCaptionsClient.swift \
 //      lirik/Sources/Lyrics/LRCParser.swift \
 //      -o /tmp/cap_test && /tmp/cap_test
 //
 //  The in-page capture sequence (AppleScript round-trips, CC cycling) is
-//  manual QA only per AGENTS.md §9 — it depends on a live browser tab.
+//  manual QA only per AGENTS.md §9; it depends on a live browser tab.
 //  Everything pure (track ranking, json3 parsing, cleaning, videoId
 //  extraction) is covered here. videoId extraction lives in
 //  test_youtube_browser.swift alongside the poller.

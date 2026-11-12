@@ -4,7 +4,7 @@
 //
 //  Persists manual lyric-timing offsets per YouTube video. Album-timed
 //  lyrics assume the song starts at 0:00, but music videos often open with
-//  dialogue/skits (or cut the intro), shifting every line — and videos
+//  dialogue/skits (or cut the intro), shifting every line; and videos
 //  without caption tracks can't be auto-calibrated. The offset (seconds,
 //  added to elapsed playback time) is saved per video ID from the
 //  preferences panel and applied by LyricsWidget on every render.

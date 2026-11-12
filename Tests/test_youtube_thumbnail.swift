@@ -3,7 +3,7 @@
 //  lirik
 //
 //  Unit tests for YouTube thumbnail artwork. Compiles against the REAL
-//  sources (not copies) — run with:
+//  sources (not copies), run with:
 //    swiftc Tests/test_youtube_thumbnail.swift \
 //      lirik/Sources/Lyrics/AlbumArtService.swift \
 //      -o /tmp/thumb_test && /tmp/thumb_test
@@ -104,7 +104,7 @@ struct YouTubeThumbnailTests {
         check(ThumbStubProtocol.recordedURLs.count == 2, "stops at first working quality (got: \(ThumbStubProtocol.recordedURLs.count) requests)")
         check(image?.size == NSSize(width: 60, height: 60), "output is 60x60 (got: \(String(describing: image?.size)))")
 
-        // Second call served from cache — no new requests.
+        // Second call served from cache, so no new requests.
         ThumbStubProtocol.recordedURLs = []
         let cached = await service.fetchYouTubeThumbnail(videoId: "abc123")
         check(cached != nil && ThumbStubProtocol.recordedURLs.isEmpty, "cache hit makes no requests")

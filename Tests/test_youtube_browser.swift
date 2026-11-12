@@ -3,7 +3,7 @@
 //  lirik
 //
 //  Unit tests for YouTube browser support. Compiles against the REAL
-//  sources (not copies) — run with:
+//  sources (not copies), run with:
 //    swiftc Tests/test_youtube_browser.swift \
 //      lirik/Sources/NowPlaying/BrowserTabPoller.swift \
 //      lirik/Sources/NowPlaying/NowPlayingTrack.swift \
@@ -13,7 +13,7 @@
 //      -o /tmp/yt_test && /tmp/yt_test
 //
 //  Browser live-polling itself (AppleScript tab enumeration, JS position
-//  probe) is manual QA only per AGENTS.md §9 — it depends on running
+//  probe) is manual QA only per AGENTS.md §9; it depends on running
 //  browsers. Everything pure and testable is covered here.
 //
 
@@ -163,7 +163,7 @@ struct YouTubeBrowserTests {
 
         // isYouTube gates caption capture and thumbnail lookup. It keys on the
         // video ID, not the source, because music.youtube.com reports
-        // .youTubeMusic — which used to skip both.
+        // .youTubeMusic, which used to skip both.
         check(browserTrack.isYouTube, "plain YouTube track is a YouTube track")
         check(ytmTrack.isYouTube, "YouTube Music track is a YouTube track")
         check(!spotifyTrack.isYouTube, "Spotify track is not a YouTube track")

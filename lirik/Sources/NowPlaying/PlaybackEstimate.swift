@@ -14,7 +14,7 @@
 //  there is no source of truth to defer to here. The estimate only ever
 //  fills a gap where elapsed time would otherwise be nil, which would pin
 //  static lyrics to the first line forever. Any real position reading
-//  supersedes it — BrowserTabPoller calls reset() as soon as one arrives.
+//  supersedes it; BrowserTabPoller calls reset() as soon as one arrives.
 //
 
 import Foundation
@@ -40,7 +40,7 @@ struct PlaybackEstimate {
             return 0
         }
         // Clock skew or a backwards system clock must not produce negative
-        // elapsed time — LRCSyncEngine treats that as "before the first line".
+        // elapsed time; LRCSyncEngine treats that as "before the first line".
         return max(0, now.timeIntervalSince(startedAt))
     }
 

@@ -5,7 +5,7 @@
 //  Fetches album cover artwork from the iTunes Search API.
 //  Free, no auth required. Caches images on disk and in memory.
 //
-//  Keyed by SHA256("artist|album") — same pattern as LyricsCache.
+//  Keyed by SHA256("artist|album"); same pattern as LyricsCache.
 //
 
 import Foundation
@@ -110,8 +110,8 @@ final class AlbumArtService: @unchecked Sendable {
     /// Performs the actual iTunes API → image download pipeline.
     /// Tries multiple query strategies in order:
     /// 1. artist + album (entity=album)
-    /// 2. artist + album (entity=musicTrack) — better for EPs/singles
-    /// 3. artist only (entity=album) — broadest fallback
+    /// 2. artist + album (entity=musicTrack), better for EPs/singles
+    /// 3. artist only (entity=album), broadest fallback
     private func performFetch(artist: String, album: String, key: String) async -> NSImage? {
         // Strategy 1: artist + album, entity=album
         if let image = await searchAndDownload(artist: artist, album: album, entity: "album", cacheKey: key) {

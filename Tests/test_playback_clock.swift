@@ -2,9 +2,9 @@
 //  test_playback_clock.swift
 //  lirik
 //
-//  Unit tests for PlaybackEstimate — the locally advanced position used by
+//  Unit tests for PlaybackEstimate: the locally advanced position used by
 //  browsers that can't report one (Firefox, Arc, JS-from-Apple-Events off).
-//  Compiles against the REAL source — run with:
+//  Compiles against the REAL source, run with:
 //    swiftc Tests/test_playback_clock.swift \
 //      lirik/Sources/NowPlaying/PlaybackEstimate.swift \
 //      -o /tmp/clock_test && /tmp/clock_test

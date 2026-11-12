@@ -10,7 +10,7 @@
 //  on a configurable polling interval. Only polls apps that are
 //  currently running to avoid launching them unnecessarily.
 //
-//  Requires macOS Automation permission — the system will prompt
+//  Requires macOS Automation permission; the system will prompt
 //  the user on first use for each target app.
 //
 //  Permission strategy:
@@ -47,7 +47,7 @@ final class AppleScriptBackend {
     private let browserTabPoller = BrowserTabPoller()
 
     /// UserDefaults key for the preferred player (owned by LirikPreferenceViewController).
-    /// Read here so the preference actually filters polling — previously write-only.
+    /// Read here so the preference actually filters polling (previously write-only).
     private let preferredPlayerKey = "io.github.ridhaaf.lirik.preferredPlayer"
 
     // MARK: - Permission retry tracking
@@ -62,7 +62,7 @@ final class AppleScriptBackend {
     private let maxConsecutiveDenialsBeforeAlert = 8
 
     /// Tracks which apps we've already spawned a subprocess for.
-    /// Only one subprocess per app per session — avoids spamming.
+    /// Only one subprocess per app per session; avoids spamming.
     private var subprocessTriggered: Set<String> = []
 
     private var compiledScripts: [String: NSAppleScript] = [:]
@@ -112,7 +112,7 @@ final class AppleScriptBackend {
 
     /// Captures the raw fmt=json3 caption body for a YouTube video ID by
     /// replaying the player's own authorized request. Blocking (several
-    /// AppleScript round-trips with sleeps) — call off the main thread.
+    /// AppleScript round-trips with sleeps), so call off the main thread.
     /// Returns nil when the tab is gone or capture fails at any step.
     func fetchYouTubeCaptions(videoId: String) -> String? {
         return browserTabPoller.fetchCaptionJSON(videoId: videoId)
@@ -297,7 +297,7 @@ final class AppleScriptBackend {
                 }
 
                 if next < maxConsecutiveDenialsBeforeAlert {
-                    NSLog("[AppleScriptBackend] Permission denied (-1743) for \(appName) — retry \(next)/\(maxConsecutiveDenialsBeforeAlert)")
+                    NSLog("[AppleScriptBackend] Permission denied (-1743) for \(appName); retry \(next)/\(maxConsecutiveDenialsBeforeAlert)")
                 } else if next == maxConsecutiveDenialsBeforeAlert {
                     NSLog("[AppleScriptBackend] ⚠️ PERSISTENT DENIAL for \(appName) after \(next) attempts. User must enable Pock → \(appName) in System Settings → Privacy & Security → Automation.")
                     DispatchQueue.main.async { [weak self] in
@@ -305,15 +305,15 @@ final class AppleScriptBackend {
                     }
                 }
             } else if errorNumber != -128 && errorNumber != -1728 {
-                // -128 = user cancelled, -1728 = app not running — both benign
+                // -128 = user cancelled, -1728 = app not running; both benign
                 NSLog("[AppleScriptBackend] Script error \(errorNumber): \(error[NSAppleScript.errorMessage] as? String ?? "unknown")")
             }
             return nil
         }
 
-        // Script succeeded — permission is granted. Reset everything.
+        // Script succeeded; permission is granted. Reset everything.
         if consecutiveDenials[appName] != nil {
-            NSLog("[AppleScriptBackend] Permission resolved for \(appName) — resetting")
+            NSLog("[AppleScriptBackend] Permission resolved for \(appName); resetting")
             consecutiveDenials.removeValue(forKey: appName)
             subprocessTriggered.remove(appName)
         }
@@ -328,7 +328,7 @@ final class AppleScriptBackend {
     /// of Pock, so the TCC dialog appears even when Pock was launched
     /// from Spotlight (where in-process AppleEvents can't trigger it).
     ///
-    /// We use a lightweight script that just asks for the player state —
+    /// We use a lightweight script that just asks for the player state,
     /// enough to trigger the dialog without heavy overhead.
     /// The subprocess is fire-and-forget; we don't need its result.
     private func triggerDialogViaSubprocess(for appName: String) {
@@ -343,7 +343,7 @@ final class AppleScriptBackend {
         process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
         process.arguments = ["-e", script]
 
-        // Discard output — we only care about the side effect (triggering dialog)
+        // Discard output; we only care about the side effect (triggering dialog)
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
 
@@ -355,7 +355,7 @@ final class AppleScriptBackend {
                 process.waitUntilExit()
                 let exitCode = process.terminationStatus
                 if exitCode == 0 {
-                    NSLog("[AppleScriptBackend] Subprocess dialog trigger for \(appName) succeeded — permission granted")
+                    NSLog("[AppleScriptBackend] Subprocess dialog trigger for \(appName) succeeded; permission granted")
                 } else {
                     NSLog("[AppleScriptBackend] Subprocess dialog trigger for \(appName) exited with code \(exitCode) (user may have denied)")
                 }

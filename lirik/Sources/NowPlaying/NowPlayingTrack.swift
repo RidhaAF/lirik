@@ -3,7 +3,7 @@
 //  lirik
 //
 //  Value type representing a currently-playing track's metadata.
-//  Consumed by LRCSyncEngine and LyricsWidget — this is the shared
+//  Consumed by LRCSyncEngine and LyricsWidget; this is the shared
 //  currency type for "what is playing right now."
 //
 
@@ -19,7 +19,7 @@ enum NowPlayingSource: String, Sendable {
 }
 
 /// Snapshot of the currently-playing track at a point in time.
-/// Pure value type — no side effects, no framework dependencies.
+/// Pure value type; no side effects, no framework dependencies.
 struct NowPlayingTrack: Sendable, Equatable {
     let title: String
     let artist: String
@@ -32,7 +32,7 @@ struct NowPlayingTrack: Sendable, Equatable {
     /// lyrics fallback). nil for Spotify / Apple Music / MediaRemote.
     let videoId: String?
 
-    /// Whether this track came from a YouTube surface — plain YouTube or
+    /// Whether this track came from a YouTube surface, plain YouTube or
     /// YouTube Music. Both carry a video ID, which is what caption capture
     /// and thumbnail lookup actually need. Keying those off
     /// `source == .browser` silently skipped every `music.youtube.com` track.
@@ -43,8 +43,8 @@ struct NowPlayingTrack: Sendable, Equatable {
     /// track *changes* vs. mere position/state updates.
     ///
     /// Source is compared so that switching the same song between e.g.
-    /// Spotify and a browser YouTube tab refetches (durations — and therefore
-    /// cache keys and LRCLIB duration matching — usually differ per source).
+    /// Spotify and a browser YouTube tab refetches (durations, and therefore
+    /// cache keys and LRCLIB duration matching, usually differ per source).
     func isSameTrack(as other: NowPlayingTrack) -> Bool {
         return title == other.title && artist == other.artist && source == other.source
     }

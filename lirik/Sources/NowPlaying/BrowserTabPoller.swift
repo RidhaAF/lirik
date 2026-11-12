@@ -11,17 +11,17 @@
 //  For each running browser (Safari, Chrome, Edge) it finds the first tab
 //  on a youtube.com/watch URL, splits the tab title into artist/title,
 //  and queries the page's <video> element for live position so synced LRC
-//  lyrics keep working — not just the static fallback.
+//  lyrics keep working, not just the static fallback.
 //
 //  Permissions: each browser needs macOS Automation permission (the system
 //  prompts on first poll via a subprocess trigger, same pattern as
-//  AppleScriptBackend). Every browser — Safari, Chrome, Edge — additionally
+//  AppleScriptBackend). Every browser (Safari, Chrome, Edge) additionally
 //  needs View/Develop → Allow JavaScript from Apple Events enabled for the
 //  position query; without it only the title is readable and the track is
 //  returned without position (LyricsWidget then degrades to auto-advancing
 //  static lyrics).
 //
-//  Must be called on the main thread — NSAppleScript is not thread-safe,
+//  Must be called on the main thread; NSAppleScript is not thread-safe,
 //  and AppleScriptBackend already polls on the main runloop.
 //
 
@@ -44,7 +44,7 @@ final class BrowserTabPoller {
 
     /// One supported browser. Data, not behavior: the query paths switch on
     /// `engine`, so adding another Chromium fork is a single entry in `all`.
-    /// Firefox is deliberately absent — it has no AppleScript tab interface
+    /// Firefox is deliberately absent; it has no AppleScript tab interface
     /// (Mozilla bugs 369901 / 939528) and is handled by FirefoxTabReader.
     struct Browser: Equatable {
         let displayName: String
@@ -76,11 +76,11 @@ final class BrowserTabPoller {
     // MARK: - State
 
     /// Browsers we've already logged a -1743 denial for this session.
-    /// One log line per browser — the 1s poller would otherwise spam.
+    /// One log line per browser, since the 1s poller would otherwise spam.
     private var permissionNoted: Set<String> = []
 
     /// Browsers we've already spawned a TCC dialog trigger for.
-    /// Only one subprocess per browser per session — avoids spamming.
+    /// Only one subprocess per browser per session; avoids spamming.
     private var dialogTriggered: Set<String> = []
 
     /// Browsers whose per-tab `execute javascript` turned out to be
@@ -103,7 +103,7 @@ final class BrowserTabPoller {
 
     /// Returns the best YouTube track across supported browsers.
     /// Ranking: an audibly-playing tab wins (a background tab can report
-    /// playing while muted — e.g. autoplay or an ad), then playing tabs
+    /// playing while muted, e.g. autoplay or an ad), then playing tabs
     /// with unknown audibility (Safari doesn't expose it), then muted
     /// playing tabs, and finally the first paused tab so the widget still
     /// shows *something* instead of nothing.
@@ -245,7 +245,7 @@ final class BrowserTabPoller {
     /// exact Media Session metadata, unlike generic tab titles).
     ///
     /// Matches watch, Shorts, youtu.be shares, live streams, and YouTube
-    /// Music — all of which render a <video> element the position probe
+    /// Music. All of these render a <video> element the position probe
     /// can read. Plain youtube.com home/channel pages are excluded since
     /// they carry no single playable track.
     ///
@@ -324,7 +324,7 @@ final class BrowserTabPoller {
     /// string without escaping.
     ///
     /// Skipped entirely for browsers that can't return a value (Arc) or that
-    /// already failed the background-tab probe this session — the caller then
+    /// already failed the background-tab probe this session, so the caller then
     /// falls back to the locally advanced estimate.
     private func readVideoPosition(in browser: Browser, window: Int, tab: Int) -> (elapsed: TimeInterval, duration: TimeInterval, isPlaying: Bool, muted: Bool)? {
         guard browser.returnsJavaScriptValues,
@@ -337,7 +337,7 @@ final class BrowserTabPoller {
         // position for the session rather than activating tabs every poll.
         if errorCode == -1723 {
             javascriptUnsupported.insert(browser.bundleIdentifier)
-            NSLog("[BrowserTabPoller] %@ cannot script background tabs — falling back to estimated position", browser.displayName)
+            NSLog("[BrowserTabPoller] %@ cannot script background tabs, falling back to estimated position", browser.displayName)
             return nil
         }
         guard let output else { return nil }
@@ -395,7 +395,7 @@ final class BrowserTabPoller {
     }
 
     /// Parses the "elapsed|||duration|||playing|paused[|||muted|sound]" probe
-    /// output. The muted segment is absent from older cached probes — treat
+    /// output. The muted segment is absent from older cached probes, so treat
     /// missing as unmuted. Returns nil for empty/malformed output (no
     /// <video> on the page).
     static func parsePositionOutput(_ output: String) -> (elapsed: TimeInterval, duration: TimeInterval, isPlaying: Bool, muted: Bool)? {
@@ -586,7 +586,7 @@ final class BrowserTabPoller {
 
     /// Runs an AppleScript snippet, returning trimmed output or nil on error.
     /// -1743 (Automation denied) is logged once per browser per session and
-    /// swallowed — the browser is lowest-priority input, so a missing grant
+    /// swallowed, and the browser is lowest-priority input, so a missing grant
     /// must not surface as a permission alert over working music apps.
     /// The system still shows its own Allow/Deny dialog on first attempt.
     private func runAppleScript(_ source: String, browser: Browser) -> String? {
@@ -606,7 +606,7 @@ final class BrowserTabPoller {
                 // First denial: spawn a /usr/bin/osascript subprocess to force
                 // the TCC Allow/Deny dialog. In-process NSAppleScript cannot
                 // trigger the dialog when Pock was launched via Spotlight,
-                // Finder-open, or our own build script — same root cause as
+                // Finder-open, or our own build script; same root cause as
                 // AppleScriptBackend.triggerDialogViaSubprocess. The subprocess
                 // runs outside Pock's process tree, so the dialog appears.
                 if !dialogTriggered.contains(browser.displayName) {
@@ -615,7 +615,7 @@ final class BrowserTabPoller {
                 }
                 if !permissionNoted.contains(browser.displayName) {
                     permissionNoted.insert(browser.displayName)
-                    NSLog("[BrowserTabPoller] Automation permission needed for %@ — allow Pock in System Settings → Privacy & Security → Automation. All browsers also need View → Developer → Allow JavaScript from Apple Events for live position.", browser.displayName)
+                    NSLog("[BrowserTabPoller] Automation permission needed for %@. Allow Pock in System Settings → Privacy & Security → Automation. All browsers also need View → Developer → Allow JavaScript from Apple Events for live position.", browser.displayName)
                 }
             } else if code == 12 {
                 // "Executing JavaScript through AppleScript is turned off."
@@ -623,11 +623,11 @@ final class BrowserTabPoller {
                 // toggle by hand, and the 1s poller would repeat it forever.
                 if !permissionNoted.contains("js-off:\(browser.displayName)") {
                     permissionNoted.insert("js-off:\(browser.displayName)")
-                    NSLog("[BrowserTabPoller] %@ has JavaScript from Apple Events disabled — enable View → Developer → Allow JavaScript from Apple Events for live position.", browser.displayName)
+                    NSLog("[BrowserTabPoller] %@ has JavaScript from Apple Events disabled. Enable View → Developer → Allow JavaScript from Apple Events for live position.", browser.displayName)
                 }
             } else if code != -128 && code != -1719 && code != -1728 {
                 // -128 user cancelled, -1719 object not found (closed tab),
-                // -1728 app not running — all benign at 1s cadence.
+                // -1728 app not running; all benign at 1s cadence.
                 NSLog("[BrowserTabPoller] %@ script error \(code): \(error[NSAppleScript.errorMessage] as? String ?? "unknown")", browser.displayName)
             }
             return (nil, code)
@@ -640,7 +640,7 @@ final class BrowserTabPoller {
 
     // MARK: - Subprocess dialog trigger
 
-    /// Spawns `/usr/bin/osascript` asking the browser for its own name —
+    /// Spawns `/usr/bin/osascript` asking the browser for its own name,
     /// a no-op query whose only purpose is making macOS present the
     /// Automation permission dialog outside Pock's process tree.
     /// Fire-and-forget; the next 1s poll picks up the granted state.

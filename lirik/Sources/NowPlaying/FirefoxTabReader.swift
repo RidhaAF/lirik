@@ -10,7 +10,7 @@
 //  its accessibility tree: each window has an AXTabGroup whose children are
 //  the tab elements, each carrying the page title.
 //
-//  That yields the track title and nothing else — no URL, no video ID, no
+//  That yields the track title and nothing else; no URL, no video ID, no
 //  playback position. Consequently Firefox tracks:
 //    - never get closed-caption lyrics (needs a video ID),
 //    - never get YouTube thumbnails (needs a video ID),
@@ -46,7 +46,7 @@ final class FirefoxTabReader {
     // MARK: - State
 
     /// Whether we've already asked macOS to show the Accessibility prompt.
-    /// Only once per session — the poller runs every second.
+    /// Only once per session, since the poller runs every second.
     private var accessibilityPrompted = false
 
     /// Whether we've already logged the "grant Accessibility" guidance.
@@ -88,7 +88,7 @@ final class FirefoxTabReader {
                     album: nil,
                     duration: nil,
                     elapsedTime: elapsed,
-                    // No position and no pause state — assume playing. A paused
+                    // No position and no pause state, so assume playing. A paused
                     // video keeps its lyrics advancing, which is the documented
                     // cost of having no JS bridge.
                     isPlaying: true,
@@ -148,7 +148,7 @@ final class FirefoxTabReader {
     private func notePermissionNeeded(for target: RunningTarget) {
         guard !permissionNoted else { return }
         permissionNoted = true
-        NSLog("[FirefoxTabReader] Accessibility permission needed for %@ — enable Pock in System Settings → Privacy & Security → Accessibility to read YouTube tabs.", target.target.displayName)
+        NSLog("[FirefoxTabReader] Accessibility permission needed for %@. Enable Pock in System Settings → Privacy & Security → Accessibility to read YouTube tabs.", target.target.displayName)
     }
 
     // MARK: - Accessibility tree reads

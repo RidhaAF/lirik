@@ -2,7 +2,7 @@
 //  test_firefox_tabs.swift
 //  lirik
 //
-//  Unit tests for FirefoxTabReader. Compiles against the REAL sources — run
+//  Unit tests for FirefoxTabReader. Compiles against the REAL sources, run
 //  with:
 //    swiftc Tests/test_firefox_tabs.swift \
 //      lirik/Sources/NowPlaying/FirefoxTabReader.swift \
@@ -14,7 +14,7 @@
 //      lirik/Sources/Lyrics/LRCLIBClient.swift \
 //      -o /tmp/firefox_test && /tmp/firefox_test
 //
-//  Reading the real AX tree is manual QA only per AGENTS.md §9 — it needs a
+//  Reading the real AX tree is manual QA only per AGENTS.md §9; it needs a
 //  running Firefox with Accessibility permission granted. Everything pure
 //  (title recognition, artist/title split, target list) is covered here.
 //

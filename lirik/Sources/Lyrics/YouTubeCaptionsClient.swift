@@ -5,7 +5,7 @@
 //  Closed-caption lyrics fallback for YouTube tracks when LRCLIB has no
 //  match. YouTube's timedtext endpoint requires a proof-of-origin token
 //  minted inside the player (direct fetches return HTTP 200 with an empty
-//  body), so this client never touches YouTube endpoints itself — the raw
+//  body), so this client never touches YouTube endpoints itself; the raw
 //  fmt=json3 body arrives through the injected closure, which replays the
 //  player's own authorized request from inside the page. See
 //  BrowserTabPoller.fetchCaptionJSON for the capture sequence.
