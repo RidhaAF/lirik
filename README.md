@@ -123,7 +123,7 @@ You can customize Lirik's layout, colors, alignment, and font size directly insi
    - **Highlight Color**: Choose from 8 themes (*White, Gold, Cyan, Green, Purple, Pink, Orange, Red*).
    - **Marquee Scrolling**: Toggle smooth scrolling for long lines.
    - **Player Source**: Select *Auto-detect*, *Spotify*, *Apple Music*, or *Browser Only* (YouTube).
-   - **Timing Offset**: One stepper that nudges lyric timing in 0.25s steps. While a YouTube video plays it edits that video's saved offset; otherwise it edits the global offset applied to every track. Positive shows lyrics earlier.
+   - **Timing Offset**: Nudges lyric timing anywhere from -300 to 300 seconds. Type a value in the field or use the stepper (0.25s steps). While a YouTube video plays it edits that video's saved offset; otherwise it edits the global offset applied to every track. Positive shows lyrics earlier.
    - **Pause Indicator**: Toggle `⏸` icon when paused.
    - **Album Artwork**: Toggle album artwork thumbnail and choose size.
    - **Song Title & Artist**: Toggle song title & artist display on track change.

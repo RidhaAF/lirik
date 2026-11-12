@@ -18,7 +18,8 @@ All notable changes to Lirik are documented in this file. The format is based on
 - Lyrics timing offset preference, to nudge sync earlier or later when a track's timestamps drift (#5, [@vadhh](https://github.com/vadhh))
 
 ### Changed
-- Timing offset is a single stepper. It edits the per-video offset while a YouTube video plays and the global offset otherwise. The two scopes are alternatives, never additive
+- Timing offset is a single control. It edits the per-video offset while a YouTube video plays and the global offset otherwise. The two scopes are alternatives, never additive
+- Timing offset range widened from -30 to 90 seconds to -300 to 300 seconds, and the value can now be typed into a field beside the stepper instead of only stepped. Typed values snap to the same 0.25s grid
 - AppleScript polling reuses precompiled scripts instead of rebuilding them on every poll (#5, [@vadhh](https://github.com/vadhh))
 
 ### Fixed
