@@ -145,6 +145,7 @@ The output bundle `lirik.pock` will be located in `dist/lirik.pock`.
 - [@RidhaAF](https://github.com/RidhaAF) — Creator & Maintainer
 - [@rizkifdh](https://github.com/rizkifdh) — Permission fix, album artwork, song title & artist display
 - [@yasiramri](https://github.com/yasiramri) — Lyrics sync freeze fix (elapsed-time interpolation, wake refresh), macOS 11+ compatibility
+- [@vadhh](https://github.com/vadhh) — Lyrics timing offset preference, long-line widget fix, AppleScript script-reuse performance
 
 ---
 
