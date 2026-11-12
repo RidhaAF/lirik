@@ -7,6 +7,16 @@ All notable changes to Lirik are documented in this file. The format is based on
 ### Added
 - YouTube Music support: `music.youtube.com` tabs resolve exact title/artist/album via Media Session metadata (tab titles stay generic) and report as their own source
 - Audible-tab ranking: a muted/autoplaying background tab no longer shadows the video being watched (muted state read from the `<video>` element; replaces the AppleScript `audible` probe, which browsers don't expose)
+- Lyrics timing offset preference, to nudge sync earlier or later when a track's timestamps drift (#5, [@vadhh](https://github.com/vadhh))
+
+### Changed
+- AppleScript polling reuses precompiled scripts instead of rebuilding them on every poll (#5, [@vadhh](https://github.com/vadhh))
+
+### Fixed
+- **Long lyric lines no longer blank the widget** (#4, [@vadhh](https://github.com/vadhh)):
+  - Widget width is capped, so an over-long line makes the Touch Bar truncate it instead of dropping the whole item
+  - Line font steps down (floor 8pt current, 7pt next) until the text fits, then truncates
+  - The cap is a heuristic sized for one companion widget beside the Control Strip; a layout with less room still hides the item
 
 ## [Unreleased] — 1.4.0
 

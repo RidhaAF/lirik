@@ -65,6 +65,8 @@ final class AppleScriptBackend {
     /// Only one subprocess per app per session — avoids spamming.
     private var subprocessTriggered: Set<String> = []
 
+    private var compiledScripts: [String: NSAppleScript] = [:]
+
     // MARK: - Public API
 
     /// Performs a one-shot fetch of now-playing info from whichever
@@ -272,7 +274,10 @@ final class AppleScriptBackend {
     /// 3. If consecutive denials reach threshold → fire `onPermissionDenied`.
     /// 4. If any query succeeds → reset counter + mark as resolved.
     private func runAppleScript(_ source: String, appName: String) -> String? {
-        let appleScript = NSAppleScript(source: source)
+        // Compile once per script: recompiling every poll cost CPU and an
+        // XProtect scan each second.
+        let appleScript = compiledScripts[source] ?? NSAppleScript(source: source)
+        compiledScripts[source] = appleScript
         var errorInfo: NSDictionary?
         let result = appleScript?.executeAndReturnError(&errorInfo)
 

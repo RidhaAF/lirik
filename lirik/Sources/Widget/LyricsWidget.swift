@@ -121,6 +121,9 @@ class LyricsWidget: NSObject, PKWidget {
         }
     }
 
+    /// Widest the widget may get; see the width cap in setupUI.
+    private static let maxWidgetWidth: CGFloat = 340
+
     private var activeLines: [LRCLine] = []
     private var isCurrentlyPaused: Bool = false
 
@@ -288,6 +291,13 @@ class LyricsWidget: NSObject, PKWidget {
         // Prevent widget from resizing when lyrics change length
         containerView.translatesAutoresizingMaskIntoConstraints = false
         containerView.widthAnchor.constraint(greaterThanOrEqualToConstant: 280).isActive = true
+        // Labels otherwise size to the full lyric line; once that exceeds the
+        // space Pock has left, the Touch Bar hides the whole item (blank gap
+        // mid-song). Capping width makes long lines truncate instead.
+        // The cap is a heuristic: it fits roughly one companion widget beside
+        // the Control Strip. A layout that leaves less room still hides the
+        // item, so this should become a preference if that is reported.
+        containerView.widthAnchor.constraint(lessThanOrEqualToConstant: Self.maxWidgetWidth).isActive = true
 
         self.view = containerView
     }
@@ -309,10 +319,13 @@ class LyricsWidget: NSObject, PKWidget {
 
         let previousText = currentLineLabel.stringValue
         currentLineLabel.stringValue = "📋 Copied to Clipboard!"
+        resetFontsToPreference()
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
             guard let self = self else { return }
             if self.currentLineLabel.stringValue == "📋 Copied to Clipboard!" {
                 self.currentLineLabel.stringValue = previousText
+                let fontSize = UserDefaults.standard.object(forKey: LirikPreferenceViewController.keyFontSize) as? Int ?? 11
+                self.applyFittedFonts(baseSize: CGFloat(fontSize))
             }
         }
     }
@@ -375,9 +388,9 @@ class LyricsWidget: NSObject, PKWidget {
             DispatchQueue.main.async {
                 self.isCurrentlyPaused = !track.isPlaying
 
-                // Manual per-video correction for music-video edits whose
-                // timing differs from the album cut (dialogue intros, etc.).
-                let effective = elapsed + self.currentVideoOffset
+                // Both timing corrections apply: the global lyrics offset
+                // (all sources) and the per-video offset (YouTube only).
+                let effective = self.effectiveElapsed(elapsed)
                 if case .synced(_, _, let lines) = self.uiState {
                     let snapshot = LRCSyncEngine.resolve(elapsedTime: effective, lines: lines)
                     self.renderSyncSnapshot(snapshot, isPaused: !track.isPlaying)
@@ -392,6 +405,16 @@ class LyricsWidget: NSObject, PKWidget {
 
     /// Observes realtime preference changes (e.g. album art toggle) to update the widget immediately
     /// without waiting for the next track change.
+    /// Playback time shifted by both user timing corrections: the global
+    /// lyrics offset (positive = lyrics earlier) and the per-video offset
+    /// for YouTube tracks (positive = lyrics later, since music-video edits
+    /// usually run behind the album cut).
+    private func effectiveElapsed(_ elapsed: TimeInterval) -> TimeInterval {
+        elapsed
+            + UserDefaults.standard.double(forKey: LirikPreferenceViewController.keyLyricsOffset)
+            + currentVideoOffset
+    }
+
     private func observePreferenceChanges() {
         NotificationCenter.default.addObserver(
             self,
@@ -587,6 +610,10 @@ class LyricsWidget: NSObject, PKWidget {
     // MARK: - UI Rendering
 
     private func updateUI() {
+        // Non-lyric states do not run the fitted-font pass, so reset here or a
+        // shrunk line from the previous track leaks into "No lyrics available".
+        resetFontsToPreference()
+
         switch uiState {
         case .noTrackPlaying:
             currentLineLabel.stringValue = "Lirik"
@@ -611,7 +638,7 @@ class LyricsWidget: NSObject, PKWidget {
             nextLineLabel.stringValue = ""
 
         case .staticOnly(_, _, let text):
-            let elapsed = (nowPlayingWatcher.currentTrack?.elapsedTime ?? 0) + currentVideoOffset
+            let elapsed = effectiveElapsed(nowPlayingWatcher.currentTrack?.elapsedTime ?? 0)
             let duration = nowPlayingWatcher.currentTrack?.duration
             renderStaticLyrics(text, elapsed: elapsed, trackDuration: duration, isPaused: isCurrentlyPaused)
 
@@ -621,7 +648,7 @@ class LyricsWidget: NSObject, PKWidget {
                 currentLineLabel.textColor = .secondaryLabelColor
                 nextLineLabel.stringValue = ""
             } else {
-                let elapsed = (nowPlayingWatcher.currentTrack?.elapsedTime ?? 0) + currentVideoOffset
+                let elapsed = effectiveElapsed(nowPlayingWatcher.currentTrack?.elapsedTime ?? 0)
                 let snapshot = LRCSyncEngine.resolve(elapsedTime: elapsed, lines: lines)
                 renderSyncSnapshot(snapshot, isPaused: isCurrentlyPaused)
             }
@@ -686,8 +713,6 @@ class LyricsWidget: NSObject, PKWidget {
         let showPauseIcon = defaults.object(forKey: LirikPreferenceViewController.keyShowPauseIcon) as? Bool ?? true
 
         applyTextAlignment()
-        currentLineLabel.font = NSFont.boldSystemFont(ofSize: CGFloat(fontSize))
-        nextLineLabel.font = NSFont.systemFont(ofSize: CGFloat(max(8, fontSize - 2)))
         nextLineLabel.isHidden = !dualLine
 
         let lines = text.components(separatedBy: .newlines)
@@ -714,6 +739,7 @@ class LyricsWidget: NSObject, PKWidget {
         setLineText(currentLineLabel, newText)
         previousCurrentLineText = newText
         nextLineLabel.stringValue = nextIndex != nil ? lines[nextIndex!] : ""
+        applyFittedFonts(baseSize: CGFloat(fontSize))
     }
 
     private func renderSyncSnapshot(_ snapshot: LRCSyncSnapshot, isPaused: Bool) {
@@ -735,8 +761,6 @@ class LyricsWidget: NSObject, PKWidget {
         let showPauseIcon = defaults.object(forKey: LirikPreferenceViewController.keyShowPauseIcon) as? Bool ?? true
 
         applyTextAlignment()
-        currentLineLabel.font = NSFont.boldSystemFont(ofSize: CGFloat(fontSize))
-        nextLineLabel.font = NSFont.systemFont(ofSize: CGFloat(max(8, fontSize - 2)))
         nextLineLabel.isHidden = !dualLine
 
         applyAlbumArtSize()
@@ -769,6 +793,7 @@ class LyricsWidget: NSObject, PKWidget {
         setLineText(currentLineLabel, newText)
         previousCurrentLineText = newText
         nextLineLabel.stringValue = upcoming
+        applyFittedFonts(baseSize: CGFloat(fontSize))
     }
 
     // MARK: - Album Art Fetching
@@ -836,6 +861,36 @@ class LyricsWidget: NSObject, PKWidget {
         let size = sizes[max(0, min(sizeIndex, sizes.count - 1))]
         albumArtWidthConstraint?.constant = size
         albumArtHeightConstraint?.constant = size
+    }
+
+    /// Restores the user's preferred font sizes. Used by states that do not
+    /// run the fitted-font pass.
+    private func resetFontsToPreference() {
+        let fontSize = UserDefaults.standard.object(forKey: LirikPreferenceViewController.keyFontSize) as? Int ?? 11
+        currentLineLabel.font = NSFont.boldSystemFont(ofSize: CGFloat(fontSize))
+        nextLineLabel.font = NSFont.systemFont(ofSize: CGFloat(max(8, fontSize - 2)))
+    }
+
+    /// Shrinks each line's font (down to a floor) until its text fits the
+    /// capped widget width; anything still too long truncates with "…".
+    private func applyFittedFonts(baseSize: CGFloat) {
+        let artWidth = albumArtImageView.isHidden ? 0 : (albumArtWidthConstraint?.constant ?? 0) + containerView.spacing
+        let insets = containerView.edgeInsets.left + containerView.edgeInsets.right
+        let available = Self.maxWidgetWidth - insets - artWidth
+
+        func fitted(_ text: String, from size: CGFloat, floor: CGFloat, bold: Bool) -> NSFont {
+            var size = size
+            while true {
+                let font = bold ? NSFont.boldSystemFont(ofSize: size) : NSFont.systemFont(ofSize: size)
+                if size <= floor || (text as NSString).size(withAttributes: [.font: font]).width <= available {
+                    return font
+                }
+                size -= 0.5
+            }
+        }
+
+        currentLineLabel.font = fitted(currentLineLabel.stringValue, from: baseSize, floor: 8, bold: true)
+        nextLineLabel.font = fitted(nextLineLabel.stringValue, from: max(8, baseSize - 2), floor: 7, bold: false)
     }
 
     /// No animation on Touch Bar — Pock's DFR rendering pipeline

@@ -8,6 +8,8 @@
 //      lirik/Sources/NowPlaying/BrowserTabPoller.swift \
 //      lirik/Sources/NowPlaying/NowPlayingTrack.swift \
 //      lirik/Sources/Lyrics/LRCLIBClient.swift \
+//      lirik/Sources/Lyrics/YouTubeCaptionsClient.swift \
+//      lirik/Sources/Lyrics/LRCParser.swift \
 //      -o /tmp/yt_test && /tmp/yt_test
 //
 //  Browser live-polling itself (AppleScript tab enumeration, JS position
