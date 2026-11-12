@@ -161,6 +161,15 @@ struct YouTubeBrowserTests {
         check(!spotifyTrack.isSameTrack(as: otherSong), "different song is a change")
         check(!browserTrack.isSameTrack(as: ytmTrack), "YouTube vs YouTube Music counts as track change")
 
+        // isYouTube gates caption capture and thumbnail lookup. It keys on the
+        // video ID, not the source, because music.youtube.com reports
+        // .youTubeMusic — which used to skip both.
+        check(browserTrack.isYouTube, "plain YouTube track is a YouTube track")
+        check(ytmTrack.isYouTube, "YouTube Music track is a YouTube track")
+        check(!spotifyTrack.isYouTube, "Spotify track is not a YouTube track")
+        let firefoxTrack = NowPlayingTrack(title: "Anti-Hero", artist: "Taylor Swift", album: nil, duration: nil, elapsedTime: 3, isPlaying: true, source: .browser, videoId: nil)
+        check(!firefoxTrack.isYouTube, "title-only browser track has no video ID, so no caption/thumbnail path")
+
         // ─── Group 5: swapped artist/title retry ───────────────────
 
         print("\nGroup 5: LRCLIBClient swapped retry (Title - Artist uploads)")
@@ -272,6 +281,46 @@ struct YouTubeBrowserTests {
         let plainResolved = BrowserTabPoller.resolveMetadata(tabTitle: "Linkin Park - Waiting For The End - YouTube", mediaSession: channelMS, isMusic: false)
         checkEqual(plainResolved.title, "Waiting For The End", "plain YouTube keeps tab-title split")
         check(plainResolved.album == nil, "plain YouTube reports no album")
+
+        // ─── Group 9: browser descriptor matrix ────────────────────
+
+        print("\nGroup 9: BrowserTabPoller.Browser descriptors")
+
+        let browsers = BrowserTabPoller.Browser.all
+        checkEqual(browsers.count, 8, "eight AppleScript browsers supported")
+        checkEqual(Set(browsers.map(\.bundleIdentifier)).count, browsers.count, "bundle identifiers are unique")
+        checkEqual(Set(browsers.map(\.displayName)).count, browsers.count, "display names are unique")
+        check(browsers.allSatisfy { !$0.displayName.isEmpty }, "every browser has an AppleScript name")
+
+        checkEqual(BrowserTabPoller.Browser.safari.engine, .webkit, "Safari uses the WebKit JS form")
+        check(browsers.filter { $0.engine == .chromium }.count == 7, "all non-Safari browsers use the Chromium JS form")
+        check(browsers.filter { !$0.returnsJavaScriptValues }.map(\.displayName) == ["Arc"], "only Arc cannot return JS values")
+        check(!browsers.contains { $0.bundleIdentifier == "org.mozilla.firefox" }, "Firefox is not an AppleScript browser")
+
+        let expectedBundleIDs = [
+            "Safari": "com.apple.Safari",
+            "Google Chrome": "com.google.Chrome",
+            "Microsoft Edge": "com.microsoft.Edge",
+            "Brave Browser": "com.brave.Browser",
+            "Vivaldi": "com.vivaldi.Vivaldi",
+            "Opera": "com.operasoftware.Opera",
+            "Chromium": "org.chromium.Chromium",
+            "Arc": "company.thebrowser.Browser",
+        ]
+        for browser in browsers {
+            checkEqual(browser.bundleIdentifier, expectedBundleIDs[browser.displayName], "\(browser.displayName) bundle identifier")
+        }
+
+        checkEqual(
+            BrowserTabPoller.estimateKey(title: "Anti-Hero", artist: "Taylor Swift"),
+            BrowserTabPoller.estimateKey(title: "Anti-Hero", artist: "Taylor Swift"),
+            "estimate key is stable for the same track"
+        )
+        check(
+            BrowserTabPoller.estimateKey(title: "Anti-Hero", artist: "Taylor Swift")
+                != BrowserTabPoller.estimateKey(title: "Anti-Hero", artist: "Someone Else"),
+            "estimate key separates same title by artist"
+        )
 
         print("\n══════════════════════════════════════════════════════")
         print("RESULTS: \(passCount) PASSED, \(failCount) FAILED")
