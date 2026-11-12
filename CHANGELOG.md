@@ -2,6 +2,18 @@
 
 All notable changes to Lirik are documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased] — 1.4.2
+
+### Added
+- Browser support expanded beyond Safari/Chrome/Edge to **Brave**, **Vivaldi**, **Opera**, **Chromium**, and **Arc**. Chromium forks reuse Chrome's scripting dictionary, so they get the same live `<video>` position and synced lyrics
+- **Firefox**, **Zen**, and **LibreWolf** support: the playing YouTube tab is read from the accessibility tree (tab title only — Firefox ships no AppleScript tab interface, Mozilla bugs 369901 / 939528). Requires Accessibility permission; no position, video ID, captions, or thumbnail
+- Estimated playback position for browsers that can't report one (Firefox, Arc, *Allow JavaScript from Apple Events* off), so static lyrics advance instead of freezing on the first line
+
+### Fixed
+- YouTube Music tracks now get MV-timeline calibration and video thumbnails. Both were gated on `source == .browser`, so every `music.youtube.com` track silently skipped them
+- Chromium builds that refuse to script background tabs (-1723) are detected once per session and degrade to title-only instead of failing every poll
+- A browser with *Allow JavaScript from Apple Events* disabled now logs the fix once instead of silently falling back
+
 ## [Unreleased] — 1.4.1
 
 ### Added

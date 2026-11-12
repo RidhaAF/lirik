@@ -1,6 +1,6 @@
-# 🎵 Lirik — Touch Bar Synced Lyrics for macOS (v1.4.1)
+# 🎵 Lirik — Touch Bar Synced Lyrics for macOS (v1.4.2)
 
-**Lirik** is a macOS Touch Bar widget that displays real-time synchronized lyrics for whatever song is playing in **Spotify**, **Apple Music**, **YouTube**, or **YouTube Music** in a browser (Safari, Chrome, Edge). Built as a native plugin for **Pock**.
+**Lirik** is a macOS Touch Bar widget that displays real-time synchronized lyrics for whatever song is playing in **Spotify**, **Apple Music**, **YouTube**, or **YouTube Music** in a browser (Safari, Chrome, Edge, Brave, Vivaldi, Opera, Chromium, Arc, Firefox). Built as a native plugin for **Pock**.
 
 ![Lirik Touch Bar Demo](assets/demo.jpg)
 
@@ -9,7 +9,7 @@
 ## ⚡ Features
 
 - **Real-Time Karaoke Lyrics**: Synchronized line-by-line lyrics powered by LRCLIB API with binary-search sync engine.
-- **YouTube Browser Support**: Picks up YouTube music videos playing in Safari, Chrome, or Edge (tab title + live `<video>` position). Music apps take priority when both play at once — see *Conflict behavior* below.
+- **YouTube Browser Support**: Picks up YouTube music videos playing in Safari, Chrome, Edge, Brave, Vivaldi, Opera, Chromium, Arc, Firefox, Zen, and LibreWolf. Chromium browsers and Safari report the live `<video>` position; Arc and Firefox report the tab title only and fall back to auto-advancing lyrics — see the [browser matrix](#-youtube-browser-setup). Music apps take priority when both play at once — see *Conflict behavior* below.
 - **YouTube Music Support**: `music.youtube.com` tabs use exact Media Session metadata (title, artist, album) instead of tab-title parsing, plus audible-tab ranking when several browsers play at once.
 - **Smart Track Sanitization**: Automatically cleans track titles (strips `(Remastered)`, `[feat.]`, `- Live`) for **30%+ higher lyric match rates**.
 - **Tap-to-Copy Touch Bar Gesture**: Tap any active lyric on your Touch Bar to instantly copy the text to your macOS clipboard.
@@ -22,7 +22,7 @@
   - **Lyric Text Size**: Small, Medium, or Large.
   - **8 Highlight Color Themes**: White, Gold, Cyan, Green, Purple, Pink, Orange, and Red.
   - **Marquee Scrolling Toggle**: Enable/disable smooth horizontal marquee scrolling for long lyric lines.
-   - **Music Player Source**: Auto-detect, Spotify Only, Apple Music Only, or Browser Only (YouTube in Safari/Chrome/Edge).
+  - **Music Player Source**: Auto-detect, Spotify Only, Apple Music Only, or Browser Only (YouTube in any supported browser).
   - **Pause Indicator**: Toggle `⏸` icon display when paused.
   - **Album Artwork**: Toggle album artwork thumbnail and choose size (Small, Medium, Large).
   - **Song Title & Artist**: Toggle song title & artist display when track changes.
@@ -92,8 +92,17 @@ When playing music for the first time:
 
 ### 🌐 YouTube Browser Setup
 
-1. Play any YouTube music video in **Safari**, **Chrome**, or **Edge**. macOS will prompt once per browser — click **Allow** (enable later under **System Settings** $\rightarrow$ **Privacy & Security** $\rightarrow$ **Automation** $\rightarrow$ **Pock**).
-2. **All browsers**: enable **Allow JavaScript from Apple Events** (in **View** $\rightarrow$ **Developer**; in Safari first show the Develop menu via **Safari Settings** $\rightarrow$ **Advanced**). Without this, Lirik can read the video title but not the playback position, so lyrics fall back to auto-advancing static mode.
+Lirik reads YouTube tabs through each browser's own scripting interface, so what it can do depends on the browser:
+
+| Browser | Detection | Synced lyrics | Extra permission |
+|---|---|---|---|
+| **Safari**, **Chrome**, **Edge**, **Brave**, **Vivaldi**, **Opera**, **Chromium** | tab URL + title | ✅ live `<video>` position | Automation + *Allow JavaScript from Apple Events* |
+| **Arc** | tab URL + title | ⏸ auto-advancing static lyrics | Automation |
+| **Firefox**, **Zen**, **LibreWolf** | tab title only | ⏸ auto-advancing static lyrics | Accessibility + Automation |
+
+1. Play any YouTube music video. macOS prompts once per browser — click **Allow**. Later: **System Settings** $\rightarrow$ **Privacy & Security** $\rightarrow$ **Automation** $\rightarrow$ **Pock**.
+2. **Chromium browsers and Safari**: enable **Allow JavaScript from Apple Events** (**View** $\rightarrow$ **Developer**; in Safari first show the Develop menu via **Safari Settings** $\rightarrow$ **Advanced**). Without it Lirik still reads the title, but the position is estimated instead of measured, so lyrics auto-advance rather than follow the video exactly.
+3. **Firefox, Zen, LibreWolf**: enable **Pock** under **System Settings** $\rightarrow$ **Privacy & Security** $\rightarrow$ **Accessibility**. Firefox has no AppleScript tab interface (Mozilla bugs [369901](https://bugzilla.mozilla.org/show_bug.cgi?id=369901) / [939528](https://bugzilla.mozilla.org/show_bug.cgi?id=939528)), so Lirik reads the tab title from the accessibility tree. That means no playback position, no video ID — and therefore no closed-caption fallback and no video thumbnail for Firefox tracks.
 
 ### ⚖️ Conflict behavior (Spotify/Music + YouTube at once)
 
