@@ -84,7 +84,7 @@ class LyricsWidget: NSObject, PKWidget {
     /// Previous current-line text, used to detect changes for fade animation.
     private var previousCurrentLineText: String = ""
 
-    /// Track info display: shows "Artist — Title" briefly when track changes.
+    /// Track info display: shows "Artist: Title" briefly when track changes.
     /// nil if not showing. Set to Date() + 3s on track change.
     private var trackInfoVisibleUntil: Date?
 
@@ -148,7 +148,7 @@ class LyricsWidget: NSObject, PKWidget {
     // MARK: - PKWidget Lifecycle Hooks
 
     func viewAppeared() {
-        NSLog("[LyricsWidget] viewAppeared — starting NowPlayingWatcher + forcing refresh")
+        NSLog("[LyricsWidget] viewAppeared; starting NowPlayingWatcher + forcing refresh")
         nowPlayingWatcher.startWatching()
         // Whenever the widget comes back into view (Touch Bar wake, DFR resume,
         // app switch, etc.) force a fresh poll so we don't render stale state.
@@ -159,7 +159,7 @@ class LyricsWidget: NSObject, PKWidget {
     }
 
     func viewDisappeared() {
-        NSLog("[LyricsWidget] viewDisappeared — stopping NowPlayingWatcher")
+        NSLog("[LyricsWidget] viewDisappeared; stopping NowPlayingWatcher")
         inFlightFetchTask?.cancel()
         calibrationTask?.cancel()
         nowPlayingWatcher.stopWatching()
@@ -200,7 +200,7 @@ class LyricsWidget: NSObject, PKWidget {
             object: nil
         )
 
-        // App activation — proxy for "user is back at the machine"
+        // App activation; proxy for "user is back at the machine"
         ws.addObserver(
             self,
             selector: #selector(handleSystemDidWake),
@@ -210,7 +210,7 @@ class LyricsWidget: NSObject, PKWidget {
     }
 
     @objc private func handleSystemDidWake(_ note: Notification) {
-        NSLog("[LyricsWidget] Wake/activation event (\(note.name.rawValue)) — forcing refresh")
+        NSLog("[LyricsWidget] Wake/activation event (\(note.name.rawValue)); forcing refresh")
         nowPlayingWatcher.forceRefresh()
         DispatchQueue.main.async { [weak self] in self?.updateUI() }
     }
@@ -376,6 +376,17 @@ class LyricsWidget: NSObject, PKWidget {
                 self.isCurrentlyPaused = false
                 self.currentVideoOffset = 0
                 self.uiState = .noTrackPlaying
+
+                // Nothing is playing, so the preferences panel must stop
+                // editing the last video's offset and fall back to the
+                // global one. Without this it keeps showing "this video
+                // only" for a video the user may have closed long ago.
+                UserDefaults.standard.set("", forKey: LyricOffsetStore.lastVideoKey)
+                NotificationCenter.default.post(
+                    name: LyricOffsetStore.trackChangedNotification,
+                    object: nil,
+                    userInfo: ["videoId": ""]
+                )
             }
         }
 
@@ -407,7 +418,7 @@ class LyricsWidget: NSObject, PKWidget {
     /// without waiting for the next track change.
     /// Playback time shifted by the active timing correction (positive =
     /// lyrics earlier). YouTube tracks use their per-video offset, everything
-    /// else uses the global one — the two are alternatives, never additive.
+    /// else uses the global one; the two are alternatives, never additive.
     /// The preferences panel exposes a single stepper that writes to whichever
     /// scope is playing, so summing both here would double-count.
     private func effectiveElapsed(_ elapsed: TimeInterval) -> TimeInterval {
@@ -505,7 +516,7 @@ class LyricsWidget: NSObject, PKWidget {
                     )
                     newState = .synced(title: track.title, artist: track.artist, lines: parsedLines)
                     self.activeLines = parsedLines
-                    // Album timing may not match the video edit — realign
+                    // Album timing may not match the video edit, so realign
                     // quietly once captions arrive (no-op when aligned).
                     self.maybeCalibrateFromCaptions(track: track, lines: parsedLines, lrclibID: id, expectedKey: expectedKey)
 
@@ -522,7 +533,7 @@ class LyricsWidget: NSObject, PKWidget {
                 case .notFound:
                     // Last resort for YouTube tracks: closed captions from
                     // the video itself (LRCLIB-first ordering per product
-                    // decision — captions are speech-segmented, not
+                    // decision; captions are speech-segmented, not
                     // song-structured). Cached as synced lines on success.
                     if let videoId = track.videoId,
                        !Task.isCancelled, self.activeTrackKey == expectedKey,
@@ -567,7 +578,7 @@ class LyricsWidget: NSObject, PKWidget {
             activeLines = lines
             uiState = .synced(title: track.title, artist: track.artist, lines: lines)
             // Cached lines may predate calibration (or the video edit may
-            // differ from the cached one) — re-check alignment quietly.
+            // differ from the cached one), so re-check alignment quietly.
             maybeCalibrateFromCaptions(track: track, lines: lines, lrclibID: cached.lrclibID, expectedKey: cached.trackKey)
         case .plainOnly(let text):
             activeLines = []
@@ -843,7 +854,7 @@ class LyricsWidget: NSObject, PKWidget {
                     self.albumArtImageView.image = image
                     self.albumArtImageView.isHidden = false
                 } else {
-                    // No artwork found — show a music note placeholder
+                    // No artwork found; show a music note placeholder
                     let placeholder = NSImage(
                         systemSymbolName: "music.note",
                         accessibilityDescription: "Album Art"
@@ -856,7 +867,7 @@ class LyricsWidget: NSObject, PKWidget {
     }
 
     /// Updates the album art image view size from UserDefaults preference.
-    /// Only changes constraint constants — does not create new constraints.
+    /// Only changes constraint constants; does not create new constraints.
     private func applyAlbumArtSize() {
         let sizeIndex = UserDefaults.standard.object(forKey: LirikPreferenceViewController.keyAlbumArtSize) as? Int ?? 1
         let sizes: [CGFloat] = [20, 24, 28]
@@ -895,7 +906,7 @@ class LyricsWidget: NSObject, PKWidget {
         nextLineLabel.font = fitted(nextLineLabel.stringValue, from: max(8, baseSize - 2), floor: 7, bold: false)
     }
 
-    /// No animation on Touch Bar — Pock's DFR rendering pipeline
+    /// No animation on Touch Bar; Pock's DFR rendering pipeline
     /// doesn't animate NSTextField smoothly. The 2-line karaoke mode
     /// provides natural visual continuity by previewing the next line.
     private func setLineText(_ label: NSTextField, _ text: String) {
