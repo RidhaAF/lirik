@@ -405,14 +405,16 @@ class LyricsWidget: NSObject, PKWidget {
 
     /// Observes realtime preference changes (e.g. album art toggle) to update the widget immediately
     /// without waiting for the next track change.
-    /// Playback time shifted by both user timing corrections: the global
-    /// lyrics offset (positive = lyrics earlier) and the per-video offset
-    /// for YouTube tracks (positive = lyrics later, since music-video edits
-    /// usually run behind the album cut).
+    /// Playback time shifted by the active timing correction (positive =
+    /// lyrics earlier). YouTube tracks use their per-video offset, everything
+    /// else uses the global one — the two are alternatives, never additive.
+    /// The preferences panel exposes a single stepper that writes to whichever
+    /// scope is playing, so summing both here would double-count.
     private func effectiveElapsed(_ elapsed: TimeInterval) -> TimeInterval {
-        elapsed
-            + UserDefaults.standard.double(forKey: LirikPreferenceViewController.keyLyricsOffset)
-            + currentVideoOffset
+        guard nowPlayingWatcher.currentTrack?.isYouTube == true else {
+            return elapsed + UserDefaults.standard.double(forKey: LirikPreferenceViewController.keyLyricsOffset)
+        }
+        return elapsed + currentVideoOffset
     }
 
     private func observePreferenceChanges() {
