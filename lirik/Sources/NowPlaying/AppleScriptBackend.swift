@@ -10,7 +10,7 @@
 //  on a configurable polling interval. Only polls apps that are
 //  currently running to avoid launching them unnecessarily.
 //
-//  Requires macOS Automation permission — the system will prompt
+//  Requires macOS Automation permission; the system will prompt
 //  the user on first use for each target app.
 //
 //  Permission strategy:
@@ -42,6 +42,14 @@ final class AppleScriptBackend {
     /// Callback fired when macOS blocks AppleScript with error -1743 (Automation Permission Denied)
     var onPermissionDenied: ((String) -> Void)?
 
+    /// YouTube-in-browser polling. Lowest priority: only consulted when no
+    /// music app reports a track (see queryNowPlaying).
+    private let browserTabPoller = BrowserTabPoller()
+
+    /// UserDefaults key for the preferred player (owned by LirikPreferenceViewController).
+    /// Read here so the preference actually filters polling (previously write-only).
+    private let preferredPlayerKey = "io.github.ridhaaf.lirik.preferredPlayer"
+
     // MARK: - Permission retry tracking
 
     /// How many consecutive -1743 errors we've seen per app.
@@ -54,7 +62,7 @@ final class AppleScriptBackend {
     private let maxConsecutiveDenialsBeforeAlert = 8
 
     /// Tracks which apps we've already spawned a subprocess for.
-    /// Only one subprocess per app per session — avoids spamming.
+    /// Only one subprocess per app per session; avoids spamming.
     private var subprocessTriggered: Set<String> = []
 
     private var compiledScripts: [String: NSAppleScript] = [:]
@@ -102,6 +110,14 @@ final class AppleScriptBackend {
         pollTimer = timer
     }
 
+    /// Captures the raw fmt=json3 caption body for a YouTube video ID by
+    /// replaying the player's own authorized request. Blocking (several
+    /// AppleScript round-trips with sleeps), so call off the main thread.
+    /// Returns nil when the tab is gone or capture fails at any step.
+    func fetchYouTubeCaptions(videoId: String) -> String? {
+        return browserTabPoller.fetchCaptionJSON(videoId: videoId)
+    }
+
     /// Stops polling and cleans up the timer.
     func stopPolling() {
         pollTimer?.invalidate()
@@ -113,7 +129,24 @@ final class AppleScriptBackend {
 
     /// Queries running media apps in priority order. Returns the first
     /// one that reports a playing track, or nil if nothing is playing.
+    ///
+    /// Priority is Spotify > Apple Music > browser YouTube: music apps
+    /// match lyrics far more reliably than YouTube tab titles, so a music
+    /// app track wins even when a browser tab is also playing. The user's
+    /// Music Player Source preference can narrow polling to a single source.
     private func queryNowPlaying() -> NowPlayingTrack? {
+        let preference = UserDefaults.standard.string(forKey: preferredPlayerKey) ?? "auto"
+        switch preference {
+        case "spotify":
+            return querySpotify()
+        case "music":
+            return queryAppleMusic()
+        case "browser":
+            return browserTabPoller.queryYouTube()
+        default:
+            break
+        }
+
         // Spotify takes priority because it's more common for lyrics use
         if isAppRunning(bundleIdentifier: "com.spotify.client") {
             if let track = querySpotify() {
@@ -127,7 +160,7 @@ final class AppleScriptBackend {
             }
         }
 
-        return nil
+        return browserTabPoller.queryYouTube()
     }
 
     /// Checks whether an app with the given bundle identifier is running,
@@ -178,7 +211,8 @@ final class AppleScriptBackend {
             duration: duration,
             elapsedTime: elapsed,
             isPlaying: stateStr == "playing",
-            source: .spotify
+            source: .spotify,
+            videoId: nil
         )
     }
 
@@ -222,7 +256,8 @@ final class AppleScriptBackend {
             duration: duration,
             elapsedTime: elapsed,
             isPlaying: stateStr == "playing",
-            source: .appleMusic
+            source: .appleMusic,
+            videoId: nil
         )
     }
 
@@ -262,7 +297,7 @@ final class AppleScriptBackend {
                 }
 
                 if next < maxConsecutiveDenialsBeforeAlert {
-                    NSLog("[AppleScriptBackend] Permission denied (-1743) for \(appName) — retry \(next)/\(maxConsecutiveDenialsBeforeAlert)")
+                    NSLog("[AppleScriptBackend] Permission denied (-1743) for \(appName); retry \(next)/\(maxConsecutiveDenialsBeforeAlert)")
                 } else if next == maxConsecutiveDenialsBeforeAlert {
                     NSLog("[AppleScriptBackend] ⚠️ PERSISTENT DENIAL for \(appName) after \(next) attempts. User must enable Pock → \(appName) in System Settings → Privacy & Security → Automation.")
                     DispatchQueue.main.async { [weak self] in
@@ -270,15 +305,15 @@ final class AppleScriptBackend {
                     }
                 }
             } else if errorNumber != -128 && errorNumber != -1728 {
-                // -128 = user cancelled, -1728 = app not running — both benign
+                // -128 = user cancelled, -1728 = app not running; both benign
                 NSLog("[AppleScriptBackend] Script error \(errorNumber): \(error[NSAppleScript.errorMessage] as? String ?? "unknown")")
             }
             return nil
         }
 
-        // Script succeeded — permission is granted. Reset everything.
+        // Script succeeded; permission is granted. Reset everything.
         if consecutiveDenials[appName] != nil {
-            NSLog("[AppleScriptBackend] Permission resolved for \(appName) — resetting")
+            NSLog("[AppleScriptBackend] Permission resolved for \(appName); resetting")
             consecutiveDenials.removeValue(forKey: appName)
             subprocessTriggered.remove(appName)
         }
@@ -293,7 +328,7 @@ final class AppleScriptBackend {
     /// of Pock, so the TCC dialog appears even when Pock was launched
     /// from Spotlight (where in-process AppleEvents can't trigger it).
     ///
-    /// We use a lightweight script that just asks for the player state —
+    /// We use a lightweight script that just asks for the player state,
     /// enough to trigger the dialog without heavy overhead.
     /// The subprocess is fire-and-forget; we don't need its result.
     private func triggerDialogViaSubprocess(for appName: String) {
@@ -308,7 +343,7 @@ final class AppleScriptBackend {
         process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
         process.arguments = ["-e", script]
 
-        // Discard output — we only care about the side effect (triggering dialog)
+        // Discard output; we only care about the side effect (triggering dialog)
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
 
@@ -320,7 +355,7 @@ final class AppleScriptBackend {
                 process.waitUntilExit()
                 let exitCode = process.terminationStatus
                 if exitCode == 0 {
-                    NSLog("[AppleScriptBackend] Subprocess dialog trigger for \(appName) succeeded — permission granted")
+                    NSLog("[AppleScriptBackend] Subprocess dialog trigger for \(appName) succeeded; permission granted")
                 } else {
                     NSLog("[AppleScriptBackend] Subprocess dialog trigger for \(appName) exited with code \(exitCode) (user may have denied)")
                 }

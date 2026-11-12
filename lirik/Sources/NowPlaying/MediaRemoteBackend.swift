@@ -48,7 +48,7 @@ final class MediaRemoteBackend {
     /// Wall-clock timestamp (Date) when MediaRemote captured the elapsed-time snapshot.
     /// Used to interpolate live elapsed = snapshot + (now - timestamp) * playbackRate.
     /// Without this, elapsed values go stale between MediaRemote pushes (which do NOT
-    /// tick continuously — see refetchTimer comment). Especially critical after Touch Bar
+    /// tick continuously; see refetchTimer comment). Especially critical after Touch Bar
     /// sleep or system sleep, when refetches may have been paused.
     static let infoUpdateTimeKey = "kMRMediaRemoteNowPlayingInfoTimestamp"
 
@@ -68,7 +68,7 @@ final class MediaRemoteBackend {
     private var onUpdate: (([String: Any]) -> Void)?
 
     /// Periodic refetch timer. MediaRemote notifications only fire on
-    /// state transitions (play/pause, track change, metadata change) —
+    /// state transitions (play/pause, track change, metadata change),
     /// they do NOT tick continuously with elapsed time. Without a local
     /// timer, lyrics freeze after resume because the widget only ever
     /// receives one elapsed-time snapshot per state change.
@@ -91,7 +91,7 @@ final class MediaRemoteBackend {
 
     /// Loads MediaRemote.framework and resolves function pointers via
     /// CFBundleGetFunctionPointerForName. All dlsym-equivalent access
-    /// is confined to this method — per AGENTS.md §7 and §11.
+    /// is confined to this method, per AGENTS.md §7 and §11.
     private func loadFramework() {
         let frameworkPath = "/System/Library/PrivateFrameworks/MediaRemote.framework"
 
@@ -156,7 +156,7 @@ final class MediaRemoteBackend {
             }
         }
 
-        // Timeout guard — if the callback never fires (macOS 15.4+),
+        // Timeout guard; if the callback never fires (macOS 15.4+),
         // we report nil so the caller can fall back to another backend.
         DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
             lock.lock()
@@ -167,7 +167,7 @@ final class MediaRemoteBackend {
             didComplete = true
             lock.unlock()
 
-            NSLog("[MediaRemoteBackend] fetchNowPlaying timed out after \(timeout)s — API likely blocked by entitlements")
+            NSLog("[MediaRemoteBackend] fetchNowPlaying timed out after \(timeout)s; API likely blocked by entitlements")
             completion(nil)
         }
     }
@@ -247,7 +247,7 @@ final class MediaRemoteBackend {
         // Interpolate elapsed against wall-clock timestamp of the snapshot.
         // MediaRemote's elapsed field is a SNAPSHOT captured at `infoUpdateTime`,
         // not a live value. Between refetches (and especially after Touch Bar/system
-        // sleep), the snapshot can be seconds stale — causing lyrics to freeze on the
+        // sleep), the snapshot can be seconds stale, which can freeze lyrics on the
         // "line at snapshot time" rather than the actual current playback line.
         let elapsed: TimeInterval?
         if let base = rawElapsed {
@@ -275,7 +275,8 @@ final class MediaRemoteBackend {
             duration: duration,
             elapsedTime: elapsed,
             isPlaying: playbackRate > 0,
-            source: .unknown // MediaRemote doesn't reliably expose which app is playing
+            source: .unknown, // MediaRemote doesn't reliably expose which app is playing
+            videoId: nil
         )
     }
 }

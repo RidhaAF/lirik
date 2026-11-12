@@ -34,7 +34,7 @@ enum LRCParser {
     ///   produce one `LRCLine` per timestamp, each with the same text.
     /// - Blank lyric text after a timestamp is preserved (represents
     ///   instrumental gaps in LRC convention).
-    /// - Duplicate timestamps are preserved — the caller (LRCSyncEngine)
+    /// - Duplicate timestamps are preserved, so the caller (LRCSyncEngine)
     ///   decides how to handle them.
     ///
     /// Returns an empty array for empty or entirely-unparseable input.
@@ -104,7 +104,7 @@ enum LRCParser {
             }
         }
 
-        // Sort by timestamp — LRC files aren't guaranteed to be ordered
+        // Sort by timestamp; LRC files aren't guaranteed to be ordered
         lines.sort { $0.timestamp < $1.timestamp }
 
         return lines

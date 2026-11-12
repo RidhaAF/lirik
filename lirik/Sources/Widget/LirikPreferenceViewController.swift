@@ -55,9 +55,23 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
     private let albumArtSizeControl = NSSegmentedControl(labels: ["Small", "Medium", "Large"], trackingMode: .selectOne, target: nil, action: nil)
     private let trackInfoCheckbox = NSButton(checkboxWithTitle: "Show song title & artist when track changes", target: nil, action: nil)
     private let offsetStepper = NSStepper()
-    private let offsetLabel = NSTextField(labelWithString: "")
+    private let offsetField = NSTextField()
+    private let offsetUnitLabel = NSTextField(labelWithString: "s")
+    private let offsetNoteLabel = NSTextField(labelWithString: "")
+
+    /// Offset range in seconds. Wide enough for long video intros; the text
+    /// field is what makes this span practical to set.
+    private static let offsetRange: ClosedRange<Double> = -300...300
+    /// One stepper click. Typed values snap to the same grid.
+    private static let offsetStep: Double = 0.25
     private let clearCacheButton = NSButton(title: "Clear Cached Lyrics", target: nil, action: nil)
     private let cacheStatusLabel = NSTextField(labelWithString: "")
+
+    /// Video ID of the track currently playing, or "" when it isn't a YouTube
+    /// video. Decides which scope the single offset stepper writes to: the
+    /// per-video store when set, the global UserDefaults value otherwise.
+    private var offsetVideoId: String = ""
+    private let offsetStore = LyricOffsetStore()
 
     private let lyricsCache = LyricsCache()
 
@@ -126,7 +140,7 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
         playerTitle.font = NSFont.systemFont(ofSize: 12, weight: .medium)
         playerStackView.addArrangedSubview(playerTitle)
 
-        playerPopUp.addItems(withTitles: ["Auto-detect", "Spotify Only", "Apple Music Only"])
+        playerPopUp.addItems(withTitles: ["Auto-detect", "Spotify Only", "Apple Music Only", "Browser Only"])
         playerStackView.addArrangedSubview(playerPopUp)
         mainStackView.addArrangedSubview(playerStackView)
 
@@ -148,27 +162,51 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
 
         mainStackView.addArrangedSubview(trackInfoCheckbox)
 
-        // Lyrics Timing Offset
+        // 7. Timing Offset: one stepper, scope follows what's playing,
+        // per-video for YouTube tracks and global for everything else.
         let offsetStackView = NSStackView()
         offsetStackView.orientation = .vertical
         offsetStackView.alignment = .leading
         offsetStackView.spacing = 4
-        let offsetTitle = NSTextField(labelWithString: "Lyrics Timing Offset:")
+        let offsetTitle = NSTextField(labelWithString: "Timing Offset:")
         offsetTitle.font = NSFont.systemFont(ofSize: 12, weight: .medium)
-        offsetStepper.minValue = -5
-        offsetStepper.maxValue = 5
-        offsetStepper.increment = 0.25
+        offsetStepper.minValue = Self.offsetRange.lowerBound
+        offsetStepper.maxValue = Self.offsetRange.upperBound
+        offsetStepper.increment = Self.offsetStep
         offsetStepper.valueWraps = false
         offsetStepper.target = self
         offsetStepper.action = #selector(onOffsetChanged)
-        offsetLabel.font = NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
-        let offsetRow = NSStackView(views: [offsetLabel, offsetStepper])
+        offsetStepper.setAccessibilityLabel("Timing Offset")
+        offsetStepper.toolTip = Self.offsetHint
+
+        offsetField.alignment = .right
+        offsetField.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+        offsetField.target = self
+        offsetField.action = #selector(onOffsetFieldCommitted)
+        offsetField.delegate = self
+        offsetField.setAccessibilityLabel("Timing Offset in seconds")
+        offsetField.toolTip = Self.offsetHint
+        offsetField.widthAnchor.constraint(equalToConstant: 68).isActive = true
+
+        offsetUnitLabel.font = NSFont.systemFont(ofSize: 12)
+        offsetUnitLabel.textColor = .secondaryLabelColor
+
+        let offsetRow = NSStackView(views: [offsetStepper, offsetField, offsetUnitLabel])
         offsetRow.spacing = 6
         offsetStackView.addArrangedSubview(offsetTitle)
         offsetStackView.addArrangedSubview(offsetRow)
+
+        offsetNoteLabel.font = NSFont.systemFont(ofSize: 11)
+        offsetNoteLabel.textColor = .secondaryLabelColor
+        offsetNoteLabel.lineBreakMode = .byWordWrapping
+        offsetNoteLabel.maximumNumberOfLines = 2
+        // Without an explicit wrap width AppKit sizes the label to the full
+        // string and the caption widens the stack instead of wrapping.
+        offsetNoteLabel.preferredMaxLayoutWidth = 332
+        offsetStackView.addArrangedSubview(offsetNoteLabel)
         mainStackView.addArrangedSubview(offsetStackView)
 
-        // 7. Clear Cache Button
+        // 8. Clear Cache Button
         let cacheStackView = NSStackView()
         cacheStackView.orientation = .horizontal
         cacheStackView.alignment = .centerY
@@ -185,18 +223,23 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
         // Target actions
         dualLineControl.target = self
         dualLineControl.action = #selector(onDualLineChanged)
+        dualLineControl.setAccessibilityLabel("Display Mode")
 
         alignmentControl.target = self
         alignmentControl.action = #selector(onAlignmentChanged)
+        alignmentControl.setAccessibilityLabel("Text Alignment")
 
         fontSizeControl.target = self
         fontSizeControl.action = #selector(onFontSizeChanged)
+        fontSizeControl.setAccessibilityLabel("Lyric Text Size")
 
         colorControl.target = self
         colorControl.action = #selector(onColorChanged)
+        colorControl.setAccessibilityLabel("Lyric Highlight Color")
 
         playerPopUp.target = self
         playerPopUp.action = #selector(onPlayerChanged)
+        playerPopUp.setAccessibilityLabel("Music Player Source")
 
         pauseIconCheckbox.target = self
         pauseIconCheckbox.action = #selector(onPauseCheckboxChanged)
@@ -209,6 +252,7 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
 
         albumArtSizeControl.target = self
         albumArtSizeControl.action = #selector(onAlbumArtSizeChanged)
+        albumArtSizeControl.setAccessibilityLabel("Album Artwork Size")
 
         trackInfoCheckbox.target = self
         trackInfoCheckbox.action = #selector(onTrackInfoCheckboxChanged)
@@ -224,6 +268,14 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
     override func viewDidLoad() {
         super.viewDidLoad()
         loadSavedPreferences()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(onVideoTrackChanged(_:)),
+            name: LyricOffsetStore.trackChangedNotification,
+            object: nil
+        )
+        offsetVideoId = UserDefaults.standard.string(forKey: LyricOffsetStore.lastVideoKey) ?? ""
+        syncOffsetControls()
     }
 
     private func loadSavedPreferences() {
@@ -260,6 +312,8 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
             playerPopUp.selectItem(at: 1)
         } else if player == "music" {
             playerPopUp.selectItem(at: 2)
+        } else if player == "browser" {
+            playerPopUp.selectItem(at: 3)
         } else {
             playerPopUp.selectItem(at: 0)
         }
@@ -280,19 +334,70 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
         trackInfoCheckbox.state = showTrackInfo ? .on : .off
 
         offsetStepper.doubleValue = defaults.double(forKey: Self.keyLyricsOffset)
-        updateOffsetLabel()
+        syncOffsetControls()
     }
 
-    private func updateOffsetLabel() {
-        let offset = offsetStepper.doubleValue
-        let direction = offset > 0 ? " · lyrics earlier" : offset < 0 ? " · lyrics later" : ""
-        offsetLabel.stringValue = String(format: "%+.2f s", offset) + direction
+    /// Points the single offset stepper and its text field at the scope that's
+    /// currently playing and refreshes their value, readout, and caption.
+    ///
+    /// The two stores stay separate (a per-video correction must not leak
+    /// into the next song) but only one of them is ever editable at a time,
+    /// so the panel needs just one control.
+    private func syncOffsetControls() {
+        let isVideo = !offsetVideoId.isEmpty
+        let value = isVideo
+            ? offsetStore.offset(forVideoId: offsetVideoId)
+            : UserDefaults.standard.double(forKey: Self.keyLyricsOffset)
+
+        offsetStepper.doubleValue = value
+        offsetField.stringValue = Self.formatOffset(value)
+        offsetNoteLabel.stringValue = isVideo
+            ? "Saved for this video only. Positive shows lyrics earlier."
+            : "Applies to all tracks except YouTube videos. Positive shows lyrics earlier."
+        offsetStepper.setAccessibilityValue(NSNumber(value: value))
+        offsetStepper.setAccessibilityHelp(offsetNoteLabel.stringValue)
+        offsetField.setAccessibilityValue("\(Self.formatOffset(value)) seconds")
+    }
+
+    /// Clamps a requested offset to the supported range and snaps it to the
+    /// 0.25s grid, then writes it to whichever scope is playing.
+    private func commitOffset(_ requested: Double) {
+        let clamped = min(max(requested, Self.offsetRange.lowerBound), Self.offsetRange.upperBound)
+        let value = (clamped / Self.offsetStep).rounded() * Self.offsetStep
+
+        if offsetVideoId.isEmpty {
+            UserDefaults.standard.set(value, forKey: Self.keyLyricsOffset)
+        } else {
+            offsetStore.setOffset(value, forVideoId: offsetVideoId)
+            NotificationCenter.default.post(name: LyricOffsetStore.offsetChangedNotification, object: nil)
+        }
+        syncOffsetControls()
     }
 
     @objc private func onOffsetChanged() {
-        UserDefaults.standard.set(offsetStepper.doubleValue, forKey: Self.keyLyricsOffset)
-        updateOffsetLabel()
+        commitOffset(offsetStepper.doubleValue)
     }
+
+    /// Reads the typed value. Empty or unparseable input reverts to what is
+    /// stored rather than silently writing a zero.
+    @objc private func onOffsetFieldCommitted() {
+        let text = offsetField.stringValue.trimmingCharacters(in: .whitespaces)
+        // Accept the decimal comma some keyboard layouts produce.
+        let normalized = text.replacingOccurrences(of: ",", with: ".")
+        guard let typed = Double(normalized), typed.isFinite else {
+            syncOffsetControls()
+            return
+        }
+        commitOffset(typed)
+    }
+
+    private static func formatOffset(_ value: Double) -> String {
+        String(format: value == 0 ? "%.2f" : "%+.2f", value)
+    }
+
+    /// Shown as the tooltip on both controls, since the range and step are
+    /// too much detail for the caption.
+    private static let offsetHint = "Seconds, -300 to 300, in 0.25 steps"
 
     @objc private func onDualLineChanged() {
         let dualLine = dualLineControl.selectedSegment == 0
@@ -334,6 +439,7 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
         switch playerPopUp.indexOfSelectedItem {
         case 1: player = "spotify"
         case 2: player = "music"
+        case 3: player = "browser"
         default: player = "auto"
         }
         UserDefaults.standard.set(player, forKey: Self.keyPreferredPlayer)
@@ -364,6 +470,12 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
         UserDefaults.standard.set(showTrackInfo, forKey: Self.keyShowTrackInfo)
     }
 
+    /// Refreshes the offset stepper when the playing video changes.
+    @objc private func onVideoTrackChanged(_ note: Notification) {
+        offsetVideoId = note.userInfo?["videoId"] as? String ?? ""
+        syncOffsetControls()
+    }
+
     @objc private func onClearCacheTapped() {
         lyricsCache.clear()
         cacheStatusLabel.stringValue = "✓ Cache Cleared"
@@ -384,6 +496,20 @@ final class LirikPreferenceViewController: NSViewController, PKWidgetPreference 
         UserDefaults.standard.set("white", forKey: Self.keyHighlightColor)
         UserDefaults.standard.set("left", forKey: Self.keyAlignment)
         UserDefaults.standard.set(0.0, forKey: Self.keyLyricsOffset)
+        // Clear the per-video offsets too. "Reset" should not leave a stale
+        // correction attached to a video the user forgot about.
+        UserDefaults.standard.removeObject(forKey: LyricOffsetStore.offsetsKey)
         loadSavedPreferences()
+    }
+}
+
+// MARK: - Text Field Commits
+
+extension LirikPreferenceViewController: NSTextFieldDelegate {
+    /// Commits on focus loss as well as on Enter, so clicking away from the
+    /// field does not drop what the user typed.
+    func controlTextDidEndEditing(_ notification: Notification) {
+        guard (notification.object as? NSTextField) === offsetField else { return }
+        onOffsetFieldCommitted()
     }
 }

@@ -84,7 +84,7 @@ class LyricsWidget: NSObject, PKWidget {
     /// Previous current-line text, used to detect changes for fade animation.
     private var previousCurrentLineText: String = ""
 
-    /// Track info display: shows "Artist — Title" briefly when track changes.
+    /// Track info display: shows "Artist: Title" briefly when track changes.
     /// nil if not showing. Set to Date() + 3s on track change.
     private var trackInfoVisibleUntil: Date?
 
@@ -94,11 +94,24 @@ class LyricsWidget: NSObject, PKWidget {
     private let lrclibClient = LRCLIBClient()
     private let lyricsCache = LyricsCache()
     private let albumArtService = AlbumArtService()
+    private let offsetStore = LyricOffsetStore()
+    /// Closed-caption fallback for YouTube tracks. Reaches back into the
+    /// browser through the watcher (never around it).
+    private lazy var captionsClient = YouTubeCaptionsClient(fetchCaptionJSON: { [weak self] videoId in
+        guard let self else { return nil }
+        return await self.nowPlayingWatcher.fetchYouTubeCaptions(videoId: videoId)
+    })
 
     // MARK: - Widget State & Race Condition Fencing
 
     private var activeTrackKey: String = ""
     private var inFlightFetchTask: Task<Void, Never>?
+    /// Background MV-timeline calibration (see maybeCalibrateFromCaptions).
+    /// Cancelled on track change / disappearance like the fetch task.
+    private var calibrationTask: Task<Void, Never>?
+    /// Manual per-video timing correction (see LyricOffsetStore), added to
+    /// elapsed playback time on every render. Resolved on track change.
+    private var currentVideoOffset: TimeInterval = 0
 
     private var uiState: LyricsWidgetUIState = .noTrackPlaying {
         didSet {
@@ -135,7 +148,7 @@ class LyricsWidget: NSObject, PKWidget {
     // MARK: - PKWidget Lifecycle Hooks
 
     func viewAppeared() {
-        NSLog("[LyricsWidget] viewAppeared — starting NowPlayingWatcher + forcing refresh")
+        NSLog("[LyricsWidget] viewAppeared; starting NowPlayingWatcher + forcing refresh")
         nowPlayingWatcher.startWatching()
         // Whenever the widget comes back into view (Touch Bar wake, DFR resume,
         // app switch, etc.) force a fresh poll so we don't render stale state.
@@ -146,8 +159,9 @@ class LyricsWidget: NSObject, PKWidget {
     }
 
     func viewDisappeared() {
-        NSLog("[LyricsWidget] viewDisappeared — stopping NowPlayingWatcher")
+        NSLog("[LyricsWidget] viewDisappeared; stopping NowPlayingWatcher")
         inFlightFetchTask?.cancel()
+        calibrationTask?.cancel()
         nowPlayingWatcher.stopWatching()
     }
 
@@ -186,7 +200,7 @@ class LyricsWidget: NSObject, PKWidget {
             object: nil
         )
 
-        // App activation — proxy for "user is back at the machine"
+        // App activation; proxy for "user is back at the machine"
         ws.addObserver(
             self,
             selector: #selector(handleSystemDidWake),
@@ -196,7 +210,7 @@ class LyricsWidget: NSObject, PKWidget {
     }
 
     @objc private func handleSystemDidWake(_ note: Notification) {
-        NSLog("[LyricsWidget] Wake/activation event (\(note.name.rawValue)) — forcing refresh")
+        NSLog("[LyricsWidget] Wake/activation event (\(note.name.rawValue)); forcing refresh")
         nowPlayingWatcher.forceRefresh()
         DispatchQueue.main.async { [weak self] in self?.updateUI() }
     }
@@ -330,11 +344,23 @@ class LyricsWidget: NSObject, PKWidget {
 
             // Cancel any in-flight fetch task from previous track immediately
             self.inFlightFetchTask?.cancel()
+            self.calibrationTask?.cancel()
 
             if let track = track {
                 self.isCurrentlyPaused = !track.isPlaying
                 let newKey = LyricsCache.makeTrackKey(title: track.title, artist: track.artist, duration: track.duration)
                 self.activeTrackKey = newKey
+
+                // Resolve the manual per-video offset and advertise the
+                // video so the preferences panel can offer adjustment.
+                let videoId = track.videoId ?? ""
+                self.currentVideoOffset = self.offsetStore.offset(forVideoId: videoId)
+                UserDefaults.standard.set(videoId, forKey: LyricOffsetStore.lastVideoKey)
+                NotificationCenter.default.post(
+                    name: LyricOffsetStore.trackChangedNotification,
+                    object: nil,
+                    userInfo: ["videoId": videoId]
+                )
 
                 // Show track info briefly if enabled
                 let defaults = UserDefaults.standard
@@ -348,7 +374,19 @@ class LyricsWidget: NSObject, PKWidget {
                 self.activeTrackKey = ""
                 self.activeLines = []
                 self.isCurrentlyPaused = false
+                self.currentVideoOffset = 0
                 self.uiState = .noTrackPlaying
+
+                // Nothing is playing, so the preferences panel must stop
+                // editing the last video's offset and fall back to the
+                // global one. Without this it keeps showing "this video
+                // only" for a video the user may have closed long ago.
+                UserDefaults.standard.set("", forKey: LyricOffsetStore.lastVideoKey)
+                NotificationCenter.default.post(
+                    name: LyricOffsetStore.trackChangedNotification,
+                    object: nil,
+                    userInfo: ["videoId": ""]
+                )
             }
         }
 
@@ -361,11 +399,14 @@ class LyricsWidget: NSObject, PKWidget {
             DispatchQueue.main.async {
                 self.isCurrentlyPaused = !track.isPlaying
 
+                // Both timing corrections apply: the global lyrics offset
+                // (all sources) and the per-video offset (YouTube only).
+                let effective = self.effectiveElapsed(elapsed)
                 if case .synced(_, _, let lines) = self.uiState {
-                    let snapshot = LRCSyncEngine.resolve(elapsedTime: self.offsetElapsed(elapsed), lines: lines)
+                    let snapshot = LRCSyncEngine.resolve(elapsedTime: effective, lines: lines)
                     self.renderSyncSnapshot(snapshot, isPaused: !track.isPlaying)
                 } else if case .staticOnly(_, _, let text) = self.uiState {
-                    self.renderStaticLyrics(text, elapsed: elapsed, trackDuration: track.duration, isPaused: !track.isPlaying)
+                    self.renderStaticLyrics(text, elapsed: effective, trackDuration: track.duration, isPaused: !track.isPlaying)
                 }
             }
         }
@@ -375,9 +416,16 @@ class LyricsWidget: NSObject, PKWidget {
 
     /// Observes realtime preference changes (e.g. album art toggle) to update the widget immediately
     /// without waiting for the next track change.
-    /// Playback time shifted by the user's lyrics offset (positive = lyrics earlier).
-    private func offsetElapsed(_ elapsed: TimeInterval) -> TimeInterval {
-        elapsed + UserDefaults.standard.double(forKey: LirikPreferenceViewController.keyLyricsOffset)
+    /// Playback time shifted by the active timing correction (positive =
+    /// lyrics earlier). YouTube tracks use their per-video offset, everything
+    /// else uses the global one; the two are alternatives, never additive.
+    /// The preferences panel exposes a single stepper that writes to whichever
+    /// scope is playing, so summing both here would double-count.
+    private func effectiveElapsed(_ elapsed: TimeInterval) -> TimeInterval {
+        guard nowPlayingWatcher.currentTrack?.isYouTube == true else {
+            return elapsed + UserDefaults.standard.double(forKey: LirikPreferenceViewController.keyLyricsOffset)
+        }
+        return elapsed + currentVideoOffset
     }
 
     private func observePreferenceChanges() {
@@ -387,6 +435,20 @@ class LyricsWidget: NSObject, PKWidget {
             name: Notification.Name("io.github.ridhaaf.lirik.albumArtChanged"),
             object: nil
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(onVideoOffsetChanged),
+            name: LyricOffsetStore.offsetChangedNotification,
+            object: nil
+        )
+    }
+
+    /// Re-reads the manual offset for the current video (saved from the
+    /// preferences panel) and re-renders immediately.
+    @objc private func onVideoOffsetChanged() {
+        let videoId = nowPlayingWatcher.currentTrack?.videoId ?? ""
+        currentVideoOffset = offsetStore.offset(forVideoId: videoId)
+        DispatchQueue.main.async { [weak self] in self?.updateUI() }
     }
 
     @objc private func onAlbumArtPreferenceChanged() {
@@ -405,6 +467,8 @@ class LyricsWidget: NSObject, PKWidget {
             }
         }
     }
+
+    // MARK: - Lyrics Loading & Caching Flow (Race Condition Fenced)
 
     // MARK: - Lyrics Loading & Caching Flow (Race Condition Fenced)
 
@@ -452,6 +516,9 @@ class LyricsWidget: NSObject, PKWidget {
                     )
                     newState = .synced(title: track.title, artist: track.artist, lines: parsedLines)
                     self.activeLines = parsedLines
+                    // Album timing may not match the video edit, so realign
+                    // quietly once captions arrive (no-op when aligned).
+                    self.maybeCalibrateFromCaptions(track: track, lines: parsedLines, lrclibID: id, expectedKey: expectedKey)
 
                 case .plainOnly(let id, let plainText):
                     cachedEntry = CachedLyrics(
@@ -464,14 +531,32 @@ class LyricsWidget: NSObject, PKWidget {
                     self.activeLines = []
 
                 case .notFound:
-                    cachedEntry = CachedLyrics(
-                        lrclibID: nil,
-                        trackKey: expectedKey,
-                        lyricsState: .notFound,
-                        cachedAt: Date()
-                    )
-                    newState = .noLyricsFound(title: track.title, artist: track.artist)
-                    self.activeLines = []
+                    // Last resort for YouTube tracks: closed captions from
+                    // the video itself (LRCLIB-first ordering per product
+                    // decision; captions are speech-segmented, not
+                    // song-structured). Cached as synced lines on success.
+                    if let videoId = track.videoId,
+                       !Task.isCancelled, self.activeTrackKey == expectedKey,
+                       let captions = await self.captionsClient.fetchLyrics(videoId: videoId),
+                       !captions.lines.isEmpty {
+                        cachedEntry = CachedLyrics(
+                            lrclibID: nil,
+                            trackKey: expectedKey,
+                            lyricsState: .synced(lines: captions.lines, rawLRC: captions.rawLRC),
+                            cachedAt: Date()
+                        )
+                        newState = .synced(title: track.title, artist: track.artist, lines: captions.lines)
+                        self.activeLines = captions.lines
+                    } else {
+                        cachedEntry = CachedLyrics(
+                            lrclibID: nil,
+                            trackKey: expectedKey,
+                            lyricsState: .notFound,
+                            cachedAt: Date()
+                        )
+                        newState = .noLyricsFound(title: track.title, artist: track.artist)
+                        self.activeLines = []
+                    }
                 }
 
                 // Final check before committing state
@@ -492,12 +577,46 @@ class LyricsWidget: NSObject, PKWidget {
         case .synced(let lines, _):
             activeLines = lines
             uiState = .synced(title: track.title, artist: track.artist, lines: lines)
+            // Cached lines may predate calibration (or the video edit may
+            // differ from the cached one), so re-check alignment quietly.
+            maybeCalibrateFromCaptions(track: track, lines: lines, lrclibID: cached.lrclibID, expectedKey: cached.trackKey)
         case .plainOnly(let text):
             activeLines = []
             uiState = .staticOnly(title: track.title, artist: track.artist, text: text)
         case .notFound:
             activeLines = []
             uiState = .noLyricsFound(title: track.title, artist: track.artist)
+        }
+    }
+
+    /// Realigns album-timed LRCLIB lines to a music video's timeline using
+    /// closed captions as video-relative ground truth. Music videos often
+    /// open with dialogue/skits that shift every line by a constant offset
+    /// the album-timed LRC cannot know about.
+    ///
+    /// Runs in the background after LRCLIB lines are already showing and
+    /// upgrades them in place when a plausible offset is found; the cache
+    /// entry is rewritten so replays start aligned. No-op for non-browser
+    /// tracks, missing video IDs, missing captions, or implausible offsets.
+    private func maybeCalibrateFromCaptions(track: NowPlayingTrack, lines: [LRCLine], lrclibID: Int?, expectedKey: String) {
+        guard track.isYouTube, let videoId = track.videoId, !lines.isEmpty else { return }
+        calibrationTask?.cancel()
+        calibrationTask = Task { [weak self] in
+            guard let self else { return }
+            guard let captions = await self.captionsClient.fetchLyrics(videoId: videoId),
+                  !Task.isCancelled, self.activeTrackKey == expectedKey,
+                  let offset = YouTubeCaptionsClient.calibrationOffset(lrclib: lines, captions: captions.lines),
+                  !Task.isCancelled, self.activeTrackKey == expectedKey else { return }
+
+            let shifted = lines.map { LRCLine(timestamp: $0.timestamp + offset, text: $0.text) }
+            self.activeLines = shifted
+            self.uiState = .synced(title: track.title, artist: track.artist, lines: shifted)
+            self.lyricsCache.save(CachedLyrics(
+                lrclibID: lrclibID,
+                trackKey: expectedKey,
+                lyricsState: .synced(lines: shifted, rawLRC: YouTubeCaptionsClient.makeLRC(from: shifted)),
+                cachedAt: Date()
+            ))
         }
     }
 
@@ -532,7 +651,7 @@ class LyricsWidget: NSObject, PKWidget {
             nextLineLabel.stringValue = ""
 
         case .staticOnly(_, _, let text):
-            let elapsed = nowPlayingWatcher.currentTrack?.elapsedTime ?? 0
+            let elapsed = effectiveElapsed(nowPlayingWatcher.currentTrack?.elapsedTime ?? 0)
             let duration = nowPlayingWatcher.currentTrack?.duration
             renderStaticLyrics(text, elapsed: elapsed, trackDuration: duration, isPaused: isCurrentlyPaused)
 
@@ -542,8 +661,8 @@ class LyricsWidget: NSObject, PKWidget {
                 currentLineLabel.textColor = .secondaryLabelColor
                 nextLineLabel.stringValue = ""
             } else {
-                let elapsed = nowPlayingWatcher.currentTrack?.elapsedTime ?? 0
-                let snapshot = LRCSyncEngine.resolve(elapsedTime: self.offsetElapsed(elapsed), lines: lines)
+                let elapsed = effectiveElapsed(nowPlayingWatcher.currentTrack?.elapsedTime ?? 0)
+                let snapshot = LRCSyncEngine.resolve(elapsedTime: elapsed, lines: lines)
                 renderSyncSnapshot(snapshot, isPaused: isCurrentlyPaused)
             }
         }
@@ -693,6 +812,8 @@ class LyricsWidget: NSObject, PKWidget {
     // MARK: - Album Art Fetching
 
     /// Fetches album artwork for the given track and displays it in the thumbnail.
+    /// YouTube tracks use the video thumbnail (square-cropped 1:1) since they
+    /// carry no album metadata; everything else uses the iTunes lookup.
     /// Skips fetch if the "Show album artwork" preference is disabled.
     private func fetchAlbumArt(for track: NowPlayingTrack) {
         let defaults = UserDefaults.standard
@@ -710,10 +831,18 @@ class LyricsWidget: NSObject, PKWidget {
         Task { [weak self] in
             guard let self else { return }
 
-            let image = await self.albumArtService.fetchArtwork(
-                artist: track.artist,
-                album: track.album
-            )
+            var image: NSImage?
+            if track.isYouTube, let videoId = track.videoId {
+                image = await self.albumArtService.fetchYouTubeThumbnail(videoId: videoId)
+                if image == nil {
+                    image = await self.albumArtService.fetchArtwork(artist: track.artist, album: track.album)
+                }
+            } else {
+                image = await self.albumArtService.fetchArtwork(
+                    artist: track.artist,
+                    album: track.album
+                )
+            }
 
             // Guard against stale results (track may have changed during fetch)
             guard self.nowPlayingWatcher.currentTrack?.isSameTrack(as: track) == true else {
@@ -725,7 +854,7 @@ class LyricsWidget: NSObject, PKWidget {
                     self.albumArtImageView.image = image
                     self.albumArtImageView.isHidden = false
                 } else {
-                    // No artwork found — show a music note placeholder
+                    // No artwork found; show a music note placeholder
                     let placeholder = NSImage(
                         systemSymbolName: "music.note",
                         accessibilityDescription: "Album Art"
@@ -738,7 +867,7 @@ class LyricsWidget: NSObject, PKWidget {
     }
 
     /// Updates the album art image view size from UserDefaults preference.
-    /// Only changes constraint constants — does not create new constraints.
+    /// Only changes constraint constants; does not create new constraints.
     private func applyAlbumArtSize() {
         let sizeIndex = UserDefaults.standard.object(forKey: LirikPreferenceViewController.keyAlbumArtSize) as? Int ?? 1
         let sizes: [CGFloat] = [20, 24, 28]
@@ -777,7 +906,7 @@ class LyricsWidget: NSObject, PKWidget {
         nextLineLabel.font = fitted(nextLineLabel.stringValue, from: max(8, baseSize - 2), floor: 7, bold: false)
     }
 
-    /// No animation on Touch Bar — Pock's DFR rendering pipeline
+    /// No animation on Touch Bar; Pock's DFR rendering pipeline
     /// doesn't animate NSTextField smoothly. The 2-line karaoke mode
     /// provides natural visual continuity by previewing the next line.
     private func setLineText(_ label: NSTextField, _ text: String) {

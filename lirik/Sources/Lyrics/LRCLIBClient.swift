@@ -8,7 +8,7 @@
 
 import Foundation
 
-/// Explicit result of an LRCLIB lookup — handles "no match found" explicitly
+/// Explicit result of an LRCLIB lookup; handles "no match found" explicitly
 /// per prompt requirements, rather than throwing errors to be swallowed.
 enum LRCLIBResult: Sendable, Equatable {
     /// Synced LRC lyrics found.
@@ -64,7 +64,9 @@ final class LRCLIBClient: Sendable {
         self.session = session
     }
 
-    /// Sanitizes track titles by stripping common noise like "(Remastered 2021)", "- Live", "[feat. ...]"
+    /// Sanitizes track titles by stripping common noise like "(Remastered 2021)", "- Live", "[feat. ...]".
+    /// Also covers YouTube-style suffixes ("Official Music Video", "Lyric Video", "Audio", "M/V")
+    /// since browser tab titles carry them verbatim.
     static func cleanTrackTitle(_ title: String) -> String {
         var cleaned = title
         let patterns = [
@@ -74,11 +76,34 @@ final class LRCLIBClient: Sendable {
             "\\s*\\[.*deluxe.*\\]",
             "\\s*\\(.*edition.*\\)",
             "\\s*\\(.*live.*\\)",
+            "\\s*\\[.*live.*\\]",
             "\\s*-\\s*live.*",
             "\\s*-\\s*remastered.*",
             "\\s*\\(feat\\..*\\)",
             "\\s*\\[feat\\..*\\]",
-            "\\s*ft\\..*"
+            "\\s*ft\\..*",
+            // YouTube upload noise (case-insensitive): covers
+            // "(Official Music Video)", "[Official 4K Video]", "(Lyric Video)", etc.
+            "\\s*\\([^)]*official[^)]*video[^)]*\\)",
+            "\\s*\\[[^\\]]*official[^\\]]*video[^\\]]*\\]",
+            "\\s*\\([^)]*official[^)]*audio[^)]*\\)",
+            "\\s*\\[[^\\]]*official[^\\]]*audio[^\\]]*\\]",
+            "\\s*-\\s*official\\s*(music\\s*)?(video|audio)\\s*$",
+            "\\s*\\([^)]*lyrics?\\s*video[^)]*\\)",
+            "\\s*\\[[^\\]]*lyrics?\\s*video[^\\]]*\\]",
+            "\\s*\\([^)]*visualizer[^)]*\\)",
+            "\\s*\\[[^\\]]*visualizer[^\\]]*\\]",
+            "\\s*\\([^)]*\\bM/?V\\b[^)]*\\)",
+            "\\s*\\[[^\\]]*\\bM/?V\\b[^\\]]*\\]",
+            "\\s*\\([^)]*\\baudio\\b[^)]*\\)",
+            "\\s*\\[[^\\]]*\\baudio\\b[^\\]]*\\]",
+            "\\s*-\\s*audio\\s*$",
+            "\\s*\\|\\s*provided to youtube.*",
+            // Video quality tags common on YouTube uploads.
+            "\\s*\\([^)]*\\b4K\\b[^)]*\\)",
+            "\\s*\\[[^\\]]*\\b4K\\b[^\\]]*\\]",
+            "\\s*\\([^)]*\\bHD\\b[^)]*\\)",
+            "\\s*\\[[^\\]]*\\bHD\\b[^\\]]*\\]"
         ]
 
         for pattern in patterns {
@@ -91,21 +116,46 @@ final class LRCLIBClient: Sendable {
     }
 
     /// Fetches lyrics from LRCLIB given track metadata.
+    ///
+    /// Retry chain on 404, in order:
+    /// 1. Sanitized title (strips remaster/live/YouTube noise).
+    /// 2. Swapped artist/title, YouTube tab titles come in both
+    ///    "Artist - Title" and "Title - Artist" order, and music apps
+    ///    occasionally mistag fields too. Skipped when the artist is the
+    ///    "Unknown Artist" placeholder (nothing to swap with).
     func fetchLyrics(
         title: String,
         artist: String,
         album: String? = nil,
         duration: TimeInterval? = nil
     ) async throws -> LRCLIBResult {
-        let result = try await queryAPI(title: title, artist: artist, album: album, duration: duration)
-        if case .notFound = result {
-            let cleaned = Self.cleanTrackTitle(title)
-            if !cleaned.isEmpty && cleaned != title {
-                NSLog("[LRCLIBClient] Retrying lookup with sanitized title: '\(cleaned)'")
-                return try await queryAPI(title: cleaned, artist: artist, album: nil, duration: duration)
+        let initial = try await queryAPI(title: title, artist: artist, album: album, duration: duration)
+        if case .notFound = initial {
+        } else {
+            return initial
+        }
+
+        let cleaned = Self.cleanTrackTitle(title)
+        if !cleaned.isEmpty && cleaned != title {
+            NSLog("[LRCLIBClient] Retrying lookup with sanitized title: '\(cleaned)'")
+            let sanitized = try await queryAPI(title: cleaned, artist: artist, album: nil, duration: duration)
+            if case .notFound = sanitized {
+            } else {
+                return sanitized
             }
         }
-        return result
+
+        if !artist.isEmpty && artist != title && artist != "Unknown Artist" {
+            let swappedTitle = Self.cleanTrackTitle(artist)
+            let swappedArtist = Self.cleanTrackTitle(title)
+            if !swappedTitle.isEmpty && !swappedArtist.isEmpty
+                && (swappedTitle != cleaned || swappedArtist != artist) {
+                NSLog("[LRCLIBClient] Retrying lookup with swapped artist/title: '\(swappedTitle)' / '\(swappedArtist)'")
+                return try await queryAPI(title: swappedTitle, artist: swappedArtist, album: nil, duration: duration)
+            }
+        }
+
+        return initial
     }
 
     private func queryAPI(

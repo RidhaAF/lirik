@@ -1,0 +1,664 @@
+//
+//  BrowserTabPoller.swift
+//  lirik
+//
+//  YouTube-in-browser now-playing detection via AppleScript tab polling.
+//  Consumed only by AppleScriptBackend, which is the primary backend on
+//  macOS 15.4+ where MediaRemote.framework is blocked by entitlement
+//  enforcement and can no longer report browser playback system-wide
+//  (see MediaRemoteBackend.swift).
+//
+//  For each running browser (Safari, Chrome, Edge) it finds the first tab
+//  on a youtube.com/watch URL, splits the tab title into artist/title,
+//  and queries the page's <video> element for live position so synced LRC
+//  lyrics keep working, not just the static fallback.
+//
+//  Permissions: each browser needs macOS Automation permission (the system
+//  prompts on first poll via a subprocess trigger, same pattern as
+//  AppleScriptBackend). Every browser (Safari, Chrome, Edge) additionally
+//  needs View/Develop → Allow JavaScript from Apple Events enabled for the
+//  position query; without it only the title is readable and the track is
+//  returned without position (LyricsWidget then degrades to auto-advancing
+//  static lyrics).
+//
+//  Must be called on the main thread; NSAppleScript is not thread-safe,
+//  and AppleScriptBackend already polls on the main runloop.
+//
+
+import Foundation
+import AppKit
+
+/// Polls supported browsers for a YouTube watch tab that is playing.
+/// Returns nil when no browser is running or no YouTube tab exists.
+final class BrowserTabPoller {
+
+    // MARK: - Supported browsers
+
+    /// How a browser exposes page JavaScript through AppleScript.
+    enum Engine: Equatable {
+        /// WebKit: `do JavaScript "…" in tab N of window M`.
+        case webkit
+        /// Chromium: `execute tab N of window M javascript "…"`.
+        case chromium
+    }
+
+    /// One supported browser. Data, not behavior: the query paths switch on
+    /// `engine`, so adding another Chromium fork is a single entry in `all`.
+    /// Firefox is deliberately absent; it has no AppleScript tab interface
+    /// (Mozilla bugs 369901 / 939528) and is handled by FirefoxTabReader.
+    struct Browser: Equatable {
+        let displayName: String
+        let bundleIdentifier: String
+        /// Whether `execute javascript` returns the script's value. Arc runs
+        /// the JS but always answers `missing value`, so its position probe
+        /// is skipped instead of failing on every single poll.
+        let returnsJavaScriptValues: Bool
+        let engine: Engine
+
+        /// AppleScript application name.
+        var scriptName: String { displayName }
+
+        static let safari = Browser(displayName: "Safari", bundleIdentifier: "com.apple.Safari", returnsJavaScriptValues: true, engine: .webkit)
+        static let chrome = Browser(displayName: "Google Chrome", bundleIdentifier: "com.google.Chrome", returnsJavaScriptValues: true, engine: .chromium)
+        static let edge = Browser(displayName: "Microsoft Edge", bundleIdentifier: "com.microsoft.Edge", returnsJavaScriptValues: true, engine: .chromium)
+        static let brave = Browser(displayName: "Brave Browser", bundleIdentifier: "com.brave.Browser", returnsJavaScriptValues: true, engine: .chromium)
+        static let vivaldi = Browser(displayName: "Vivaldi", bundleIdentifier: "com.vivaldi.Vivaldi", returnsJavaScriptValues: true, engine: .chromium)
+        static let opera = Browser(displayName: "Opera", bundleIdentifier: "com.operasoftware.Opera", returnsJavaScriptValues: true, engine: .chromium)
+        static let chromium = Browser(displayName: "Chromium", bundleIdentifier: "org.chromium.Chromium", returnsJavaScriptValues: true, engine: .chromium)
+        static let arc = Browser(displayName: "Arc", bundleIdentifier: "company.thebrowser.Browser", returnsJavaScriptValues: false, engine: .chromium)
+
+        /// Poll order. Chromium forks share one scripting dictionary, so this
+        /// only decides ties; audible ranking in `selectBest` does the real
+        /// work when several browsers are playing at once.
+        static let all: [Browser] = [.safari, .chrome, .edge, .brave, .vivaldi, .opera, .chromium, .arc]
+    }
+
+    // MARK: - State
+
+    /// Browsers we've already logged a -1743 denial for this session.
+    /// One log line per browser, since the 1s poller would otherwise spam.
+    private var permissionNoted: Set<String> = []
+
+    /// Browsers we've already spawned a TCC dialog trigger for.
+    /// Only one subprocess per browser per session; avoids spamming.
+    private var dialogTriggered: Set<String> = []
+
+    /// Browsers whose per-tab `execute javascript` turned out to be
+    /// unsupported (some Chromium builds only script the active tab and
+    /// answer -1723 for background ones). Probed once per session, then
+    /// the browser degrades to title-only instead of erroring every poll.
+    /// We never activate tabs to work around this: stealing focus once a
+    /// second is worse than static lyrics.
+    private var javascriptUnsupported: Set<String> = []
+
+    /// Title-only fallback for Firefox, which has no AppleScript tab API.
+    private let firefoxReader = FirefoxTabReader()
+
+    /// Advances playback time for browsers that can't report a position
+    /// (Firefox, Arc, JS-from-Apple-Events disabled). Without it, static
+    /// lyrics would sit on line one forever.
+    private var playbackEstimate = PlaybackEstimate()
+
+    // MARK: - Public API
+
+    /// Returns the best YouTube track across supported browsers.
+    /// Ranking: an audibly-playing tab wins (a background tab can report
+    /// playing while muted, e.g. autoplay or an ad), then playing tabs
+    /// with unknown audibility (Safari doesn't expose it), then muted
+    /// playing tabs, and finally the first paused tab so the widget still
+    /// shows *something* instead of nothing.
+    func queryYouTube() -> NowPlayingTrack? {
+        var candidates: [(track: NowPlayingTrack, audible: Bool?)] = []
+        for browser in Browser.all {
+            guard isAppRunning(bundleIdentifier: browser.bundleIdentifier) else { continue }
+            if let hit = queryBrowser(browser) {
+                candidates.append(hit)
+            }
+        }
+        if let firefox = firefoxReader.queryYouTube() {
+            candidates.append((firefox, nil))
+        }
+        return Self.selectBest(from: candidates)
+    }
+
+    /// Picks the winning track from per-browser candidates, in poll order.
+    /// Pure function so the ranking is unit-testable without browsers.
+    static func selectBest(from candidates: [(track: NowPlayingTrack, audible: Bool?)]) -> NowPlayingTrack? {
+        func rank(audible: Bool?, isPlaying: Bool) -> Int {
+            guard isPlaying else { return 3 }
+            switch audible {
+            case true: return 0
+            case nil: return 1
+            case false: return 2
+            }
+        }
+        return candidates
+            .enumerated()
+            .min { rank(audible: $0.element.audible, isPlaying: $0.element.track.isPlaying) < rank(audible: $1.element.audible, isPlaying: $1.element.track.isPlaying) }
+            .map { $0.element.track }
+    }
+
+    // MARK: - Per-browser query
+
+    /// Finds the YouTube tab in one browser and reads its video position.
+    /// Returns the track plus whether the tab is audibly producing sound
+    /// (playing and unmuted per the <video> element; nil when unknown).
+    /// Used by selectBest to rank candidates across browsers.
+    private func queryBrowser(_ browser: Browser) -> (track: NowPlayingTrack, audible: Bool?)? {
+        guard let found = findYouTubeTab(in: browser) else { return nil }
+
+        // YouTube Music exposes exact structured metadata via the Media
+        // Session API while its tab titles stay generic ("YouTube Music"),
+        // so prefer it there. Plain YouTube titles still go through the
+        // tab-title split (its Media Session artist is just the channel).
+        let mediaSession = readMediaSession(window: found.windowIndex, tab: found.tabIndex, browser: browser)
+        let (title, artist, album) = Self.resolveMetadata(
+            tabTitle: found.title,
+            mediaSession: mediaSession,
+            isMusic: found.isMusic
+        )
+        guard !title.isEmpty else { return nil }
+
+        // Position query is best-effort: without it (JS toggle off, Arc's
+        // value-less bridge, unsupported background tabs) we still return
+        // the track, with a locally advanced estimate so static lyrics move.
+        if let position = readVideoPosition(in: browser, window: found.windowIndex, tab: found.tabIndex) {
+            let duration: TimeInterval? = position.duration > 0 ? position.duration : nil
+            let track = NowPlayingTrack(
+                title: title,
+                artist: artist,
+                album: album,
+                duration: duration,
+                elapsedTime: max(0, position.elapsed),
+                isPlaying: position.isPlaying,
+                source: found.isMusic ? .youTubeMusic : .browser,
+                videoId: found.videoId
+            )
+            playbackEstimate.reset()
+            return (track, position.isPlaying ? !position.muted : nil)
+        }
+
+        let estimated = playbackEstimate.elapsed(forKey: Self.estimateKey(title: title, artist: artist), at: Date())
+        let track = NowPlayingTrack(
+            title: title,
+            artist: artist,
+            album: album,
+            duration: nil,
+            elapsedTime: estimated,
+            isPlaying: true,
+            source: found.isMusic ? .youTubeMusic : .browser,
+            videoId: found.videoId
+        )
+        return (track, nil)
+    }
+
+    /// Cache/estimate identity for a title-only track. Artist is included
+    /// because two uploads can share a title (live vs studio).
+    static func estimateKey(title: String, artist: String) -> String {
+        "\(artist)\u{1F}\(title)"
+    }
+
+    /// Structured metadata from the Media Session API. Empty strings mean
+    /// the page hasn't published metadata (backgrounded tab, ad playing).
+    struct MediaSessionMetadata: Sendable, Equatable {
+        let title: String
+        let artist: String
+        let album: String
+    }
+
+    /// Resolves track metadata, preferring structured Media Session values
+    /// on YouTube Music (exact title/artist/album) and falling back to the
+    /// tab-title split everywhere else. Pure function for testability.
+    static func resolveMetadata(tabTitle: String, mediaSession: MediaSessionMetadata?, isMusic: Bool) -> (title: String, artist: String, album: String?) {
+        if isMusic,
+           let ms = mediaSession,
+           !ms.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let artist = ms.artist.trimmingCharacters(in: .whitespacesAndNewlines)
+            let album = ms.album.trimmingCharacters(in: .whitespacesAndNewlines)
+            return (
+                ms.title.trimmingCharacters(in: .whitespacesAndNewlines),
+                artist.isEmpty ? "Unknown Artist" : artist,
+                album.isEmpty ? nil : album
+            )
+        }
+        let (artist, title) = splitArtistTitle(from: tabTitle)
+        return (title, artist, nil)
+    }
+
+    /// Reads Media Session metadata from a tab. Best-effort: returns nil
+    /// when the page hasn't published any (or JS is disabled).
+    private func readMediaSession(window: Int, tab: Int, browser: Browser) -> MediaSessionMetadata? {
+        let js = "(() => { const m = (navigator.mediaSession ? navigator.mediaSession.metadata : null); if (!m) return ''; return JSON.stringify({t: m.title||'', a: m.artist||'', al: m.album||''}); })()"
+        guard let output = runPageScript(js, browser: browser, window: window, tab: tab),
+              let data = output.data(using: .utf8),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: String] else { return nil }
+        return MediaSessionMetadata(
+            title: root["t"] ?? "",
+            artist: root["a"] ?? "",
+            album: root["al"] ?? ""
+        )
+    }
+
+    /// Locates the first YouTube tab in a browser.
+    /// Returns the tab title, window/tab indices for the position query,
+    /// the video ID, and whether the tab is YouTube Music (which publishes
+    /// exact Media Session metadata, unlike generic tab titles).
+    ///
+    /// Matches watch, Shorts, youtu.be shares, live streams, and YouTube
+    /// Music. All of these render a <video> element the position probe
+    /// can read. Plain youtube.com home/channel pages are excluded since
+    /// they carry no single playable track.
+    ///
+    /// Cross-browser preference is handled by selectBest (audible playing
+    /// tabs win); within one browser the first match wins.
+    private func findYouTubeTab(in browser: Browser) -> (title: String, windowIndex: Int, tabIndex: Int, videoId: String?, isMusic: Bool)? {
+        let titleProperty = browser.engine == .webkit ? "name" : "title"
+        let script = """
+        tell application "\(browser.scriptName)"
+            repeat with w from 1 to (count of windows)
+                repeat with t from 1 to (count of tabs of window w)
+                    try
+                        set tabURL to URL of tab t of window w
+                    on error
+                        set tabURL to ""
+                    end try
+                    if tabURL contains "youtube.com/watch" or tabURL contains "youtube.com/shorts/" or tabURL contains "youtube.com/live/" or tabURL contains "youtu.be/" or tabURL contains "music.youtube.com" then
+                        set tabTitle to \(titleProperty) of tab t of window w
+                        return tabURL & "|||" & tabTitle & "|||" & w & "|||" & t
+                    end if
+                end repeat
+            end repeat
+            return ""
+        end tell
+        """
+
+        guard let output = runAppleScript(script, browser: browser) else { return nil }
+        let parts = output.components(separatedBy: "|||")
+        guard parts.count >= 4,
+              let windowIndex = Int(parts[2].trimmingCharacters(in: .whitespaces)),
+              let tabIndex = Int(parts[3].trimmingCharacters(in: .whitespaces)) else { return nil }
+        let title = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { return nil }
+        // The tab URL doubles as the captions source key: videoId travels on
+        // the track so LyricsWidget can attempt the closed-caption fallback.
+        let tabURL = parts[0].trimmingCharacters(in: .whitespacesAndNewlines)
+        let isMusic = tabURL.lowercased().contains("music.youtube.com")
+        return (title, windowIndex, tabIndex, Self.extractVideoId(from: tabURL), isMusic)
+    }
+
+    // MARK: - Video ID extraction (unit-testable, no browser needed)
+
+    /// Extracts the 11-character YouTube video ID from watch, share, Shorts,
+    /// live, embed, and YouTube Music URLs. Returns nil when no ID is found.
+    static func extractVideoId(from urlString: String) -> String? {
+        guard let url = URL(string: urlString),
+              let host = url.host?.lowercased() else { return nil }
+
+        if host.hasSuffix("youtu.be") {
+            let id = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                .components(separatedBy: "/").first ?? ""
+            return id.isEmpty ? nil : id
+        }
+
+        guard host.contains("youtube.com") || host.contains("music.youtube.com") else { return nil }
+
+        if let components = URLComponents(string: urlString),
+           let id = components.queryItems?.first(where: { $0.name == "v" })?.value,
+           !id.isEmpty {
+            return id
+        }
+
+        // Path forms: /shorts/ID, /live/ID, /embed/ID (first segment checked
+        // so channel/custom paths like /@user never match).
+        let segments = url.path.components(separatedBy: "/").filter { !$0.isEmpty }
+        if segments.count >= 2 && ["shorts", "live", "embed"].contains(segments[0].lowercased()) {
+            return segments[1].isEmpty ? nil : segments[1]
+        }
+        return nil
+    }
+
+    /// Reads currentTime/duration/paused/muted from the tab's <video> element.
+    /// Muted state feeds selectBest: an autoplaying muted background tab must
+    /// not shadow the video being watched. The JS deliberately uses single
+    /// quotes only so it can be embedded in an AppleScript double-quoted
+    /// string without escaping.
+    ///
+    /// Skipped entirely for browsers that can't return a value (Arc) or that
+    /// already failed the background-tab probe this session, so the caller then
+    /// falls back to the locally advanced estimate.
+    private func readVideoPosition(in browser: Browser, window: Int, tab: Int) -> (elapsed: TimeInterval, duration: TimeInterval, isPlaying: Bool, muted: Bool)? {
+        guard browser.returnsJavaScriptValues,
+              !javascriptUnsupported.contains(browser.bundleIdentifier) else { return nil }
+
+        let js = "(() => { const v = document.querySelector('video'); if (!v) return ''; return v.currentTime + '|||' + (isFinite(v.duration) ? v.duration : 0) + '|||' + (v.paused ? 'paused' : 'playing') + '|||' + (v.muted ? 'muted' : 'sound'); })()"
+
+        let (output, errorCode) = runPageScriptWithCode(js, browser: browser, window: window, tab: tab)
+        // -1723: this Chromium build only scripts the active tab. Give up on
+        // position for the session rather than activating tabs every poll.
+        if errorCode == -1723 {
+            javascriptUnsupported.insert(browser.bundleIdentifier)
+            NSLog("[BrowserTabPoller] %@ cannot script background tabs, falling back to estimated position", browser.displayName)
+            return nil
+        }
+        guard let output else { return nil }
+        return Self.parsePositionOutput(output)
+    }
+
+    /// Runs JavaScript in a tab identified by browser/window/tab indices.
+    private func runPageScript(_ js: String, browser: Browser, window: Int, tab: Int) -> String? {
+        runPageScriptWithCode(js, browser: browser, window: window, tab: tab).result
+    }
+
+    /// Same as `runPageScript`, but surfaces the AppleScript error number so
+    /// callers can tell "JS bridge unsupported" (-1723) from "user hasn't
+    /// enabled Allow JavaScript from Apple Events" (12) or a denied
+    /// Automation grant (-1743).
+    private func runPageScriptWithCode(_ js: String, browser: Browser, window: Int, tab: Int) -> (result: String?, errorCode: Int?) {
+        let script: String
+        switch browser.engine {
+        case .webkit:
+            script = "tell application \"\(browser.scriptName)\" to do JavaScript \"\(js)\" in tab \(tab) of window \(window)"
+        case .chromium:
+            script = "tell application \"\(browser.scriptName)\" to execute tab \(tab) of window \(window) javascript \"\(js)\""
+        }
+        return runAppleScriptWithCode(script, browser: browser)
+    }
+
+    // MARK: - Pure parsers (unit-testable, no browser needed)
+
+    /// Splits a YouTube tab title into artist/title.
+    /// Browsers append " - YouTube" to every tab title; music uploads are
+    /// conventionally "Artist - Title", so the first " - " separates them.
+    /// Uploads without an artist separator keep the whole title with an
+    /// "Unknown Artist" placeholder, matching MediaRemoteBackend's behavior.
+    static func splitArtistTitle(from rawTitle: String) -> (artist: String, title: String) {
+        // Trim first: real tab titles can carry trailing whitespace that
+        // would otherwise defeat the hasSuffix checks below. Bare forms
+        // cover degenerate titles holding nothing but the suffix itself.
+        var cleaned = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        for suffix in [" - YouTube Music", " - YouTube", "- YouTube Music", "- YouTube"] {
+            if cleaned.hasSuffix(suffix) {
+                cleaned = String(cleaned.dropLast(suffix.count))
+                break
+            }
+        }
+        cleaned = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if let separator = cleaned.range(of: " - ") {
+            let artist = String(cleaned[..<separator.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let title = String(cleaned[separator.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !artist.isEmpty && !title.isEmpty {
+                return (artist, title)
+            }
+        }
+        return ("Unknown Artist", cleaned)
+    }
+
+    /// Parses the "elapsed|||duration|||playing|paused[|||muted|sound]" probe
+    /// output. The muted segment is absent from older cached probes, so treat
+    /// missing as unmuted. Returns nil for empty/malformed output (no
+    /// <video> on the page).
+    static func parsePositionOutput(_ output: String) -> (elapsed: TimeInterval, duration: TimeInterval, isPlaying: Bool, muted: Bool)? {
+        let parts = output.components(separatedBy: "|||")
+        guard parts.count >= 3 else { return nil }
+        // JS always formats numbers with "." decimals; normalize anyway
+        // since TimeInterval parsing is locale-sensitive (see AppleScriptBackend).
+        let elapsedStr = parts[0].trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: ",", with: ".")
+        let durationStr = parts[1].trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: ",", with: ".")
+        guard let elapsed = TimeInterval(elapsedStr),
+              let duration = TimeInterval(durationStr) else { return nil }
+        let state = parts[2].trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let muted = parts.count >= 4
+            ? parts[3].trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "muted"
+            : false
+        return (elapsed, duration, state == "playing", muted)
+    }
+
+    // MARK: - Caption capture
+
+    /// Captures the raw fmt=json3 caption body for a video by replaying the
+    /// player's own authorized timedtext request from inside the page.
+    /// Direct fetches from Swift fail (YouTube returns HTTP 200 with an empty
+    /// body without the player-minted proof-of-origin token), so every step
+    /// runs as page JavaScript through the AppleScript bridge.
+    ///
+    /// Sequence: read context (CC state + track list) → install request hook
+    /// → cycle CC off→on to force the player to request captions → read the
+    /// captured URL → refetch it in-page with fmt=json3 → restore CC state.
+    /// Returns nil when the tab is gone, has no caption tracks, or any step
+    /// fails. Callers must invoke off the main thread: the sequence performs
+    /// several round-trips with sleeps between them.
+    func fetchCaptionJSON(videoId: String) -> String? {
+        guard let tab = locateVideoTab(videoId: videoId) else { return nil }
+
+        guard let context = readCaptionContext(tab: tab),
+              let choice = YouTubeCaptionsClient.chooseTrack(from: context.tracks) else { return nil }
+
+        _ = runPageScript(captureHookJS, tab: tab)
+        setCaptionsEnabled(false, tab: tab)
+        Thread.sleep(forTimeInterval: 0.7)
+        setCaptionsEnabled(true, tab: tab)
+        Thread.sleep(forTimeInterval: 2.0)
+
+        guard let urls = readCapturedURLs(tab: tab), !urls.isEmpty else {
+            setCaptionsEnabled(context.ccWasOn, tab: tab)
+            return nil
+        }
+        setCaptionsEnabled(context.ccWasOn, tab: tab)
+
+        guard let body = refetchAsJSON3(urls: urls, language: choice.languageCode, tab: tab),
+              !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return body
+    }
+
+    /// A located tab plus its browser, for the capture sequence.
+    private struct LocatedTab {
+        let browser: Browser
+        let window: Int
+        let tab: Int
+    }
+
+    /// Caption context from the in-page probe.
+    private struct CaptionContext {
+        let ccWasOn: Bool
+        let tracks: [CaptionTrackOption]
+    }
+
+    /// Re-finds the tab playing a video ID. Indices from the poll may be
+    /// stale (tab closed, navigated away) by capture time.
+    private func locateVideoTab(videoId: String) -> LocatedTab? {
+        for browser in Browser.all {
+            guard isAppRunning(bundleIdentifier: browser.bundleIdentifier) else { continue }
+            let script = """
+            tell application "\(browser.scriptName)"
+                repeat with w from 1 to (count of windows)
+                    repeat with t from 1 to (count of tabs of window w)
+                        try
+                            set tabURL to URL of tab t of window w
+                        on error
+                            set tabURL to ""
+                        end try
+                        if tabURL contains "\(videoId)" then return (w as string) & "|||" & (t as string)
+                    end if
+                end repeat
+                return ""
+            end tell
+            """
+            guard let output = runAppleScript(script, browser: browser) else { continue }
+            let parts = output.components(separatedBy: "|||")
+            if parts.count >= 2,
+               let w = Int(parts[0].trimmingCharacters(in: .whitespaces)),
+               let t = Int(parts[1].trimmingCharacters(in: .whitespaces)) {
+                return LocatedTab(browser: browser, window: w, tab: t)
+            }
+        }
+        return nil
+    }
+
+    /// Reads CC state and the caption track list from the page.
+    private func readCaptionContext(tab: LocatedTab) -> CaptionContext? {
+        // Single quotes only, so the script embeds in an AppleScript
+        // double-quoted string without escaping (same rule as all probes).
+        let js = "(() => { const out = { ccOn: false, tracks: [] }; try { const b = document.querySelector('.ytp-subtitles-button'); out.ccOn = b ? b.getAttribute('aria-pressed') === 'true' : false; } catch (e) {} try { const p = document.querySelector('#movie_player'); let r = window.ytInitialPlayerResponse || null; if (!r && p && p.getPlayerResponse) { r = p.getPlayerResponse(); if (typeof r === 'string') { r = JSON.parse(r); } } const list = r && r.captions && r.captions.playerCaptionsTracklistRenderer; const ts = (list && list.captionTracks) || []; out.tracks = ts.map(function (t) { return { lang: t.languageCode || '', kind: t.kind || '' }; }); } catch (e) {} return JSON.stringify(out); })()"
+
+        guard let output = runPageScript(js, tab: tab),
+              let data = output.data(using: .utf8),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+
+        let ccWasOn = root["ccOn"] as? Bool ?? false
+        let rawTracks = root["tracks"] as? [[String: String]] ?? []
+        let tracks = rawTracks.compactMap { dict -> CaptionTrackOption? in
+            guard let lang = dict["lang"], !lang.isEmpty else { return nil }
+            let kind = dict["kind"]
+            return CaptionTrackOption(languageCode: lang, kind: kind?.isEmpty == true ? nil : kind)
+        }
+        guard !tracks.isEmpty else { return nil }
+        return CaptionContext(ccWasOn: ccWasOn, tracks: tracks)
+    }
+
+    /// Installs fetch/XHR hooks recording timedtext request URLs.
+    private let captureHookJS = "(() => { try { window.__lirikCap = []; const push = function (u) { try { if (typeof u === 'string' && u.indexOf('/api/timedtext') !== -1 && window.__lirikCap.indexOf(u) === -1) { window.__lirikCap.push(u); } } catch (e) {} }; const of = window.fetch; window.fetch = function (u, o) { push(typeof u === 'string' ? u : ((u && u.url) || '')); return of.apply(this, arguments); }; const oo = window.XMLHttpRequest.prototype.open; window.XMLHttpRequest.prototype.open = function (m, u) { push(u); return oo.apply(this, arguments); }; } catch (e) {} return 'ok'; })()"
+
+    /// Clicks the CC button to force the player to (re)request captions.
+    private func setCaptionsEnabled(_ enabled: Bool, tab: LocatedTab) {
+        // The button toggles, so only click when state differs from intent.
+        // State is re-read live: no cached assumptions across the sleeps.
+        let js = "(() => { const b = document.querySelector('.ytp-subtitles-button'); if (!b) { return 'missing'; } const on = b.getAttribute('aria-pressed') === 'true'; const want = \(enabled ? "true" : "false"); if (on !== want) { b.click(); } return 'ok'; })()"
+        _ = runPageScript(js, tab: tab)
+    }
+
+    /// Reads URLs captured by the hook.
+    private func readCapturedURLs(tab: LocatedTab) -> [String]? {
+        let js = "(() => { try { return JSON.stringify(window.__lirikCap || []); } catch (e) { return '[]'; } })()"
+        guard let output = runPageScript(js, tab: tab),
+              let data = output.data(using: .utf8),
+              let urls = try? JSONSerialization.jsonObject(with: data) as? [String] else { return nil }
+        return urls.filter { !$0.isEmpty }
+    }
+
+    /// Refetches a captured player URL in-page with fmt=json3 forced and
+    /// returns the body. In-page origin + cookies + token make the request
+    /// authorized; the fmt swap only changes the response serialization.
+    private func refetchAsJSON3(urls: [String], language: String, tab: LocatedTab) -> String? {
+        guard let source = urls.first(where: { Self.queryParam($0, named: "lang")?.lowercased() == language.lowercased() }) ?? urls.first,
+              var components = URLComponents(string: source) else { return nil }
+
+        var items = components.queryItems ?? []
+        if let index = items.firstIndex(where: { $0.name == "fmt" }) {
+            items[index].value = "json3"
+        } else {
+            items.append(URLQueryItem(name: "fmt", value: "json3"))
+        }
+        components.queryItems = items
+
+        guard let final = components.url?.absoluteString,
+              !final.contains("\""), !final.contains("\\") else { return nil }
+
+        let js = "(() => fetch('\(final)', {credentials: 'same-origin'}).then(function (r) { return r.text(); }).catch(function (e) { return ''; }))()"
+        return runPageScript(js, tab: tab)
+    }
+
+    /// Reads one query parameter from a URL string. Returns nil when absent.
+    private static func queryParam(_ urlString: String, named name: String) -> String? {
+        guard let components = URLComponents(string: urlString) else { return nil }
+        return components.queryItems?.first(where: { $0.name == name })?.value
+    }
+
+    /// Runs JavaScript in a located tab. Returns trimmed output or nil.
+    private func runPageScript(_ js: String, tab: LocatedTab) -> String? {
+        let script: String
+        switch tab.browser.engine {
+        case .webkit:
+            script = "tell application \"\(tab.browser.scriptName)\" to do JavaScript \"\(js)\" in tab \(tab.tab) of window \(tab.window)"
+        case .chromium:
+            script = "tell application \"\(tab.browser.scriptName)\" to execute tab \(tab.tab) of window \(tab.window) javascript \"\(js)\""
+        }
+        return runAppleScript(script, browser: tab.browser)
+    }
+
+    // MARK: - Helpers
+
+    private func isAppRunning(bundleIdentifier: String) -> Bool {
+        return NSWorkspace.shared.runningApplications.contains {
+            $0.bundleIdentifier == bundleIdentifier
+        }
+    }
+
+    /// Runs an AppleScript snippet, returning trimmed output or nil on error.
+    /// -1743 (Automation denied) is logged once per browser per session and
+    /// swallowed, and the browser is lowest-priority input, so a missing grant
+    /// must not surface as a permission alert over working music apps.
+    /// The system still shows its own Allow/Deny dialog on first attempt.
+    private func runAppleScript(_ source: String, browser: Browser) -> String? {
+        runAppleScriptWithCode(source, browser: browser).result
+    }
+
+    /// Same as `runAppleScript`, but also returns the AppleScript error
+    /// number (nil on success) so callers can react to specific failures.
+    private func runAppleScriptWithCode(_ source: String, browser: Browser) -> (result: String?, errorCode: Int?) {
+        guard let script = NSAppleScript(source: source) else { return (nil, nil) }
+        var errorInfo: NSDictionary?
+        let result = script.executeAndReturnError(&errorInfo)
+
+        if let error = errorInfo {
+            let code = error[NSAppleScript.errorNumber] as? Int ?? 0
+            if code == -1743 {
+                // First denial: spawn a /usr/bin/osascript subprocess to force
+                // the TCC Allow/Deny dialog. In-process NSAppleScript cannot
+                // trigger the dialog when Pock was launched via Spotlight,
+                // Finder-open, or our own build script; same root cause as
+                // AppleScriptBackend.triggerDialogViaSubprocess. The subprocess
+                // runs outside Pock's process tree, so the dialog appears.
+                if !dialogTriggered.contains(browser.displayName) {
+                    dialogTriggered.insert(browser.displayName)
+                    triggerDialogViaSubprocess(for: browser)
+                }
+                if !permissionNoted.contains(browser.displayName) {
+                    permissionNoted.insert(browser.displayName)
+                    NSLog("[BrowserTabPoller] Automation permission needed for %@. Allow Pock in System Settings → Privacy & Security → Automation. All browsers also need View → Developer → Allow JavaScript from Apple Events for live position.", browser.displayName)
+                }
+            } else if code == 12 {
+                // "Executing JavaScript through AppleScript is turned off."
+                // Only worth one line per browser: the user has to flip the
+                // toggle by hand, and the 1s poller would repeat it forever.
+                if !permissionNoted.contains("js-off:\(browser.displayName)") {
+                    permissionNoted.insert("js-off:\(browser.displayName)")
+                    NSLog("[BrowserTabPoller] %@ has JavaScript from Apple Events disabled. Enable View → Developer → Allow JavaScript from Apple Events for live position.", browser.displayName)
+                }
+            } else if code != -128 && code != -1719 && code != -1728 {
+                // -128 user cancelled, -1719 object not found (closed tab),
+                // -1728 app not running; all benign at 1s cadence.
+                NSLog("[BrowserTabPoller] %@ script error \(code): \(error[NSAppleScript.errorMessage] as? String ?? "unknown")", browser.displayName)
+            }
+            return (nil, code)
+        }
+
+        guard let output = result.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !output.isEmpty else { return (nil, nil) }
+        return (output, nil)
+    }
+
+    // MARK: - Subprocess dialog trigger
+
+    /// Spawns `/usr/bin/osascript` asking the browser for its own name,
+    /// a no-op query whose only purpose is making macOS present the
+    /// Automation permission dialog outside Pock's process tree.
+    /// Fire-and-forget; the next 1s poll picks up the granted state.
+    private func triggerDialogViaSubprocess(for browser: Browser) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = ["-e", "tell application \"\(browser.scriptName)\" to get name"]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                try process.run()
+                process.waitUntilExit()
+                NSLog("[BrowserTabPoller] Subprocess dialog trigger for %@ exited with code \(process.terminationStatus)", browser.displayName)
+            } catch {
+                NSLog("[BrowserTabPoller] Failed to spawn subprocess for %@: \(error.localizedDescription)", browser.displayName)
+            }
+        }
+    }
+}

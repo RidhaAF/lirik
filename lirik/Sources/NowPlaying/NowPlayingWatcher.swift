@@ -3,7 +3,7 @@
 //  lirik
 //
 //  Single source of truth for "what is playing right now," per AGENTS.md §7.
-//  Consumers (LRCSyncEngine, LyricsWidget) interact only with this type —
+//  Consumers (LRCSyncEngine, LyricsWidget) interact only with this type;
 //  never with MediaRemoteBackend or AppleScriptBackend directly.
 //
 //  Auto-selects backend at startup:
@@ -26,7 +26,7 @@ final class NowPlayingWatcher {
 
     /// Called on every poll/notification cycle with the latest elapsed
     /// time. This is the value LRCSyncEngine uses to pick the current
-    /// lyric line — per AGENTS.md §7, MediaRemote elapsed-time updates
+    /// lyric line, per AGENTS.md §7; MediaRemote elapsed-time updates
     /// are the single source of truth for sync position.
     var onElapsedTimeUpdate: ((TimeInterval) -> Void)?
 
@@ -56,12 +56,12 @@ final class NowPlayingWatcher {
         // Idempotent: if a backend is already active, just force a refresh
         // rather than double-registering observers and timers.
         if activeBackend != nil {
-            NSLog("[NowPlayingWatcher] startWatching called while already active — forcing refresh instead")
+            NSLog("[NowPlayingWatcher] startWatching called while already active; forcing refresh instead")
             forceRefresh()
             return
         }
 
-        NSLog("[NowPlayingWatcher] Starting — probing backends...")
+        NSLog("[NowPlayingWatcher] Starting; probing backends...")
 
         if mediaRemoteBackend.isAvailable {
             probeMediaRemoteThenFallback()
@@ -73,7 +73,7 @@ final class NowPlayingWatcher {
 
     /// Forces an immediate refetch from whichever backend is active.
     /// Call this after the Touch Bar wakes, the widget re-appears, or the
-    /// system wakes from sleep — situations where our polling timers may
+    /// system wakes from sleep; situations where our polling timers may
     /// have quiesced or MediaRemote snapshots may be stale.
     ///
     /// Safe to call even before a backend is selected (no-op in that case).
@@ -90,6 +90,15 @@ final class NowPlayingWatcher {
         case .none:
             break
         }
+    }
+
+    /// Captures the raw fmt=json3 caption body for a YouTube video ID.
+    /// Only available from the AppleScript backend (the only one that can
+    /// reach into browser tabs). Returns nil on the MediaRemote backend or
+    /// when capture fails. Blocking, so call off the main thread.
+    func fetchYouTubeCaptions(videoId: String) async -> String? {
+        guard activeBackend == .appleScript else { return nil }
+        return appleScriptBackend.fetchYouTubeCaptions(videoId: videoId)
     }
 
     /// Stops all watching and cleans up.
@@ -112,7 +121,7 @@ final class NowPlayingWatcher {
             guard let self else { return }
 
             if track != nil {
-                NSLog("[NowPlayingWatcher] MediaRemote responded — using it as backend")
+                NSLog("[NowPlayingWatcher] MediaRemote responded; using it as backend")
                 self.startMediaRemoteBackend()
             } else {
                 // Ambiguous: could be "nothing playing" or "API blocked."
@@ -123,10 +132,10 @@ final class NowPlayingWatcher {
                         guard let self else { return }
 
                         if retryTrack != nil {
-                            NSLog("[NowPlayingWatcher] MediaRemote responded on retry — using it")
+                            NSLog("[NowPlayingWatcher] MediaRemote responded on retry; using it")
                             self.startMediaRemoteBackend()
                         } else {
-                            NSLog("[NowPlayingWatcher] MediaRemote timed out twice — falling back to AppleScript")
+                            NSLog("[NowPlayingWatcher] MediaRemote timed out twice; falling back to AppleScript")
                             self.startAppleScriptBackend()
                         }
                     }
@@ -184,7 +193,7 @@ final class NowPlayingWatcher {
             currentTrack = newTrack
             onTrackChange?(newTrack)
         } else {
-            // Same track — update stored state for elapsed time / play state
+            // Same track; update stored state for elapsed time / play state
             currentTrack = newTrack
         }
 
