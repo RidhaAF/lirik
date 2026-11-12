@@ -586,7 +586,7 @@ class LyricsWidget: NSObject, PKWidget {
     /// entry is rewritten so replays start aligned. No-op for non-browser
     /// tracks, missing video IDs, missing captions, or implausible offsets.
     private func maybeCalibrateFromCaptions(track: NowPlayingTrack, lines: [LRCLine], lrclibID: Int?, expectedKey: String) {
-        guard track.source == .browser, let videoId = track.videoId, !lines.isEmpty else { return }
+        guard track.isYouTube, let videoId = track.videoId, !lines.isEmpty else { return }
         calibrationTask?.cancel()
         calibrationTask = Task { [weak self] in
             guard let self else { return }
@@ -819,7 +819,7 @@ class LyricsWidget: NSObject, PKWidget {
             guard let self else { return }
 
             var image: NSImage?
-            if track.source == .browser, let videoId = track.videoId {
+            if track.isYouTube, let videoId = track.videoId {
                 image = await self.albumArtService.fetchYouTubeThumbnail(videoId: videoId)
                 if image == nil {
                     image = await self.albumArtService.fetchArtwork(artist: track.artist, album: track.album)

@@ -32,6 +32,12 @@ struct NowPlayingTrack: Sendable, Equatable {
     /// lyrics fallback). nil for Spotify / Apple Music / MediaRemote.
     let videoId: String?
 
+    /// Whether this track came from a YouTube surface — plain YouTube or
+    /// YouTube Music. Both carry a video ID, which is what caption capture
+    /// and thumbnail lookup actually need. Keying those off
+    /// `source == .browser` silently skipped every `music.youtube.com` track.
+    var isYouTube: Bool { videoId != nil }
+
     /// Two tracks represent the "same song" if title, artist, and source match,
     /// regardless of elapsed time or playback state. Used to detect
     /// track *changes* vs. mere position/state updates.
