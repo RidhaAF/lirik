@@ -9,10 +9,14 @@ All notable changes to Lirik are documented in this file. The format is based on
 - **Firefox**, **Zen**, and **LibreWolf** support: the playing YouTube tab is read from the accessibility tree (tab title only — Firefox ships no AppleScript tab interface, Mozilla bugs 369901 / 939528). Requires Accessibility permission; no position, video ID, captions, or thumbnail
 - Estimated playback position for browsers that can't report one (Firefox, Arc, *Allow JavaScript from Apple Events* off), so static lyrics advance instead of freezing on the first line
 
+### Changed
+- Timing offset is a single stepper again. It edits the per-video offset while a YouTube video plays and the global offset otherwise, instead of exposing two controls. The two scopes are alternatives, not additive
+
 ### Fixed
 - YouTube Music tracks now get MV-timeline calibration and video thumbnails. Both were gated on `source == .browser`, so every `music.youtube.com` track silently skipped them
 - Chromium builds that refuse to script background tabs (-1723) are detected once per session and degrade to title-only instead of failing every poll
 - A browser with *Allow JavaScript from Apple Events* disabled now logs the fix once instead of silently falling back
+- The per-video offset caption said positive values delay the lyrics; the implementation advances them. Copy now matches the math
 
 ## [Unreleased] — 1.4.1
 
