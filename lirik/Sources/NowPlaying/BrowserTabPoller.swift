@@ -34,30 +34,43 @@ final class BrowserTabPoller {
 
     // MARK: - Supported browsers
 
-    enum Browser: CaseIterable {
-        case safari
-        case chrome
-        case edge
+    /// How a browser exposes page JavaScript through AppleScript.
+    enum Engine: Equatable {
+        /// WebKit: `do JavaScript "…" in tab N of window M`.
+        case webkit
+        /// Chromium: `execute tab N of window M javascript "…"`.
+        case chromium
+    }
 
-        var bundleIdentifier: String {
-            switch self {
-            case .safari: return "com.apple.Safari"
-            case .chrome: return "com.google.Chrome"
-            case .edge: return "com.microsoft.Edge"
-            }
-        }
-
-        /// Name shown in logs and permission guidance.
-        var displayName: String {
-            switch self {
-            case .safari: return "Safari"
-            case .chrome: return "Google Chrome"
-            case .edge: return "Microsoft Edge"
-            }
-        }
+    /// One supported browser. Data, not behavior: the query paths switch on
+    /// `engine`, so adding another Chromium fork is a single entry in `all`.
+    /// Firefox is deliberately absent — it has no AppleScript tab interface
+    /// (Mozilla bugs 369901 / 939528) and is handled by FirefoxTabReader.
+    struct Browser: Equatable {
+        let displayName: String
+        let bundleIdentifier: String
+        /// Whether `execute javascript` returns the script's value. Arc runs
+        /// the JS but always answers `missing value`, so its position probe
+        /// is skipped instead of failing on every single poll.
+        let returnsJavaScriptValues: Bool
+        let engine: Engine
 
         /// AppleScript application name.
         var scriptName: String { displayName }
+
+        static let safari = Browser(displayName: "Safari", bundleIdentifier: "com.apple.Safari", returnsJavaScriptValues: true, engine: .webkit)
+        static let chrome = Browser(displayName: "Google Chrome", bundleIdentifier: "com.google.Chrome", returnsJavaScriptValues: true, engine: .chromium)
+        static let edge = Browser(displayName: "Microsoft Edge", bundleIdentifier: "com.microsoft.Edge", returnsJavaScriptValues: true, engine: .chromium)
+        static let brave = Browser(displayName: "Brave Browser", bundleIdentifier: "com.brave.Browser", returnsJavaScriptValues: true, engine: .chromium)
+        static let vivaldi = Browser(displayName: "Vivaldi", bundleIdentifier: "com.vivaldi.Vivaldi", returnsJavaScriptValues: true, engine: .chromium)
+        static let opera = Browser(displayName: "Opera", bundleIdentifier: "com.operasoftware.Opera", returnsJavaScriptValues: true, engine: .chromium)
+        static let chromium = Browser(displayName: "Chromium", bundleIdentifier: "org.chromium.Chromium", returnsJavaScriptValues: true, engine: .chromium)
+        static let arc = Browser(displayName: "Arc", bundleIdentifier: "company.thebrowser.Browser", returnsJavaScriptValues: false, engine: .chromium)
+
+        /// Poll order. Chromium forks share one scripting dictionary, so this
+        /// only decides ties; audible ranking in `selectBest` does the real
+        /// work when several browsers are playing at once.
+        static let all: [Browser] = [.safari, .chrome, .edge, .brave, .vivaldi, .opera, .chromium, .arc]
     }
 
     // MARK: - State
@@ -70,6 +83,22 @@ final class BrowserTabPoller {
     /// Only one subprocess per browser per session — avoids spamming.
     private var dialogTriggered: Set<String> = []
 
+    /// Browsers whose per-tab `execute javascript` turned out to be
+    /// unsupported (some Chromium builds only script the active tab and
+    /// answer -1723 for background ones). Probed once per session, then
+    /// the browser degrades to title-only instead of erroring every poll.
+    /// We never activate tabs to work around this: stealing focus once a
+    /// second is worse than static lyrics.
+    private var javascriptUnsupported: Set<String> = []
+
+    /// Title-only fallback for Firefox, which has no AppleScript tab API.
+    private let firefoxReader = FirefoxTabReader()
+
+    /// Advances playback time for browsers that can't report a position
+    /// (Firefox, Arc, JS-from-Apple-Events disabled). Without it, static
+    /// lyrics would sit on line one forever.
+    private var playbackEstimate = PlaybackEstimate()
+
     // MARK: - Public API
 
     /// Returns the best YouTube track across supported browsers.
@@ -80,11 +109,14 @@ final class BrowserTabPoller {
     /// shows *something* instead of nothing.
     func queryYouTube() -> NowPlayingTrack? {
         var candidates: [(track: NowPlayingTrack, audible: Bool?)] = []
-        for browser in Browser.allCases {
+        for browser in Browser.all {
             guard isAppRunning(bundleIdentifier: browser.bundleIdentifier) else { continue }
             if let hit = queryBrowser(browser) {
                 candidates.append(hit)
             }
+        }
+        if let firefox = firefoxReader.queryYouTube() {
+            candidates.append((firefox, nil))
         }
         return Self.selectBest(from: candidates)
     }
@@ -127,8 +159,9 @@ final class BrowserTabPoller {
         )
         guard !title.isEmpty else { return nil }
 
-        // Position query is best-effort: without it (JS toggle off,
-        // CSP quirks) we still return the track so static lyrics can show.
+        // Position query is best-effort: without it (JS toggle off, Arc's
+        // value-less bridge, unsupported background tabs) we still return
+        // the track, with a locally advanced estimate so static lyrics move.
         if let position = readVideoPosition(in: browser, window: found.windowIndex, tab: found.tabIndex) {
             let duration: TimeInterval? = position.duration > 0 ? position.duration : nil
             let track = NowPlayingTrack(
@@ -141,20 +174,28 @@ final class BrowserTabPoller {
                 source: found.isMusic ? .youTubeMusic : .browser,
                 videoId: found.videoId
             )
+            playbackEstimate.reset()
             return (track, position.isPlaying ? !position.muted : nil)
         }
 
+        let estimated = playbackEstimate.elapsed(forKey: Self.estimateKey(title: title, artist: artist), at: Date())
         let track = NowPlayingTrack(
             title: title,
             artist: artist,
             album: album,
             duration: nil,
-            elapsedTime: nil,
+            elapsedTime: estimated,
             isPlaying: true,
             source: found.isMusic ? .youTubeMusic : .browser,
             videoId: found.videoId
         )
         return (track, nil)
+    }
+
+    /// Cache/estimate identity for a title-only track. Artist is included
+    /// because two uploads can share a title (live vs studio).
+    static func estimateKey(title: String, artist: String) -> String {
+        "\(artist)\u{1F}\(title)"
     }
 
     /// Structured metadata from the Media Session API. Empty strings mean
@@ -211,7 +252,7 @@ final class BrowserTabPoller {
     /// Cross-browser preference is handled by selectBest (audible playing
     /// tabs win); within one browser the first match wins.
     private func findYouTubeTab(in browser: Browser) -> (title: String, windowIndex: Int, tabIndex: Int, videoId: String?, isMusic: Bool)? {
-        let titleProperty = browser == .safari ? "name" : "title"
+        let titleProperty = browser.engine == .webkit ? "name" : "title"
         let script = """
         tell application "\(browser.scriptName)"
             repeat with w from 1 to (count of windows)
@@ -281,23 +322,46 @@ final class BrowserTabPoller {
     /// not shadow the video being watched. The JS deliberately uses single
     /// quotes only so it can be embedded in an AppleScript double-quoted
     /// string without escaping.
+    ///
+    /// Skipped entirely for browsers that can't return a value (Arc) or that
+    /// already failed the background-tab probe this session — the caller then
+    /// falls back to the locally advanced estimate.
     private func readVideoPosition(in browser: Browser, window: Int, tab: Int) -> (elapsed: TimeInterval, duration: TimeInterval, isPlaying: Bool, muted: Bool)? {
+        guard browser.returnsJavaScriptValues,
+              !javascriptUnsupported.contains(browser.bundleIdentifier) else { return nil }
+
         let js = "(() => { const v = document.querySelector('video'); if (!v) return ''; return v.currentTime + '|||' + (isFinite(v.duration) ? v.duration : 0) + '|||' + (v.paused ? 'paused' : 'playing') + '|||' + (v.muted ? 'muted' : 'sound'); })()"
 
-        guard let output = runPageScript(js, browser: browser, window: window, tab: tab) else { return nil }
+        let (output, errorCode) = runPageScriptWithCode(js, browser: browser, window: window, tab: tab)
+        // -1723: this Chromium build only scripts the active tab. Give up on
+        // position for the session rather than activating tabs every poll.
+        if errorCode == -1723 {
+            javascriptUnsupported.insert(browser.bundleIdentifier)
+            NSLog("[BrowserTabPoller] %@ cannot script background tabs — falling back to estimated position", browser.displayName)
+            return nil
+        }
+        guard let output else { return nil }
         return Self.parsePositionOutput(output)
     }
 
     /// Runs JavaScript in a tab identified by browser/window/tab indices.
     private func runPageScript(_ js: String, browser: Browser, window: Int, tab: Int) -> String? {
+        runPageScriptWithCode(js, browser: browser, window: window, tab: tab).result
+    }
+
+    /// Same as `runPageScript`, but surfaces the AppleScript error number so
+    /// callers can tell "JS bridge unsupported" (-1723) from "user hasn't
+    /// enabled Allow JavaScript from Apple Events" (12) or a denied
+    /// Automation grant (-1743).
+    private func runPageScriptWithCode(_ js: String, browser: Browser, window: Int, tab: Int) -> (result: String?, errorCode: Int?) {
         let script: String
-        switch browser {
-        case .safari:
+        switch browser.engine {
+        case .webkit:
             script = "tell application \"\(browser.scriptName)\" to do JavaScript \"\(js)\" in tab \(tab) of window \(window)"
-        case .chrome, .edge:
+        case .chromium:
             script = "tell application \"\(browser.scriptName)\" to execute tab \(tab) of window \(window) javascript \"\(js)\""
         }
-        return runAppleScript(script, browser: browser)
+        return runAppleScriptWithCode(script, browser: browser)
     }
 
     // MARK: - Pure parsers (unit-testable, no browser needed)
@@ -403,7 +467,7 @@ final class BrowserTabPoller {
     /// Re-finds the tab playing a video ID. Indices from the poll may be
     /// stale (tab closed, navigated away) by capture time.
     private func locateVideoTab(videoId: String) -> LocatedTab? {
-        for browser in Browser.allCases {
+        for browser in Browser.all {
             guard isAppRunning(bundleIdentifier: browser.bundleIdentifier) else { continue }
             let script = """
             tell application "\(browser.scriptName)"
@@ -503,10 +567,10 @@ final class BrowserTabPoller {
     /// Runs JavaScript in a located tab. Returns trimmed output or nil.
     private func runPageScript(_ js: String, tab: LocatedTab) -> String? {
         let script: String
-        switch tab.browser {
-        case .safari:
+        switch tab.browser.engine {
+        case .webkit:
             script = "tell application \"\(tab.browser.scriptName)\" to do JavaScript \"\(js)\" in tab \(tab.tab) of window \(tab.window)"
-        case .chrome, .edge:
+        case .chromium:
             script = "tell application \"\(tab.browser.scriptName)\" to execute tab \(tab.tab) of window \(tab.window) javascript \"\(js)\""
         }
         return runAppleScript(script, browser: tab.browser)
@@ -526,7 +590,13 @@ final class BrowserTabPoller {
     /// must not surface as a permission alert over working music apps.
     /// The system still shows its own Allow/Deny dialog on first attempt.
     private func runAppleScript(_ source: String, browser: Browser) -> String? {
-        guard let script = NSAppleScript(source: source) else { return nil }
+        runAppleScriptWithCode(source, browser: browser).result
+    }
+
+    /// Same as `runAppleScript`, but also returns the AppleScript error
+    /// number (nil on success) so callers can react to specific failures.
+    private func runAppleScriptWithCode(_ source: String, browser: Browser) -> (result: String?, errorCode: Int?) {
+        guard let script = NSAppleScript(source: source) else { return (nil, nil) }
         var errorInfo: NSDictionary?
         let result = script.executeAndReturnError(&errorInfo)
 
@@ -547,17 +617,25 @@ final class BrowserTabPoller {
                     permissionNoted.insert(browser.displayName)
                     NSLog("[BrowserTabPoller] Automation permission needed for %@ — allow Pock in System Settings → Privacy & Security → Automation. All browsers also need View → Developer → Allow JavaScript from Apple Events for live position.", browser.displayName)
                 }
+            } else if code == 12 {
+                // "Executing JavaScript through AppleScript is turned off."
+                // Only worth one line per browser: the user has to flip the
+                // toggle by hand, and the 1s poller would repeat it forever.
+                if !permissionNoted.contains("js-off:\(browser.displayName)") {
+                    permissionNoted.insert("js-off:\(browser.displayName)")
+                    NSLog("[BrowserTabPoller] %@ has JavaScript from Apple Events disabled — enable View → Developer → Allow JavaScript from Apple Events for live position.", browser.displayName)
+                }
             } else if code != -128 && code != -1719 && code != -1728 {
                 // -128 user cancelled, -1719 object not found (closed tab),
                 // -1728 app not running — all benign at 1s cadence.
                 NSLog("[BrowserTabPoller] %@ script error \(code): \(error[NSAppleScript.errorMessage] as? String ?? "unknown")", browser.displayName)
             }
-            return nil
+            return (nil, code)
         }
 
         guard let output = result.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !output.isEmpty else { return nil }
-        return output
+              !output.isEmpty else { return (nil, nil) }
+        return (output, nil)
     }
 
     // MARK: - Subprocess dialog trigger
