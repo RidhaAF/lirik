@@ -4,6 +4,12 @@ All notable changes to Lirik are documented in this file. The format is based on
 
 ## [Unreleased]
 
+### Added
+- Lyrics timing offset preference, to nudge sync earlier or later when a track's timestamps drift (#5, [@vadhh](https://github.com/vadhh))
+
+### Changed
+- AppleScript polling reuses precompiled scripts instead of rebuilding them on every poll (#5, [@vadhh](https://github.com/vadhh))
+
 ### Fixed
 - **Long lyric lines no longer blank the widget** (#4, [@vadhh](https://github.com/vadhh)):
   - Widget width is capped, so an over-long line makes the Touch Bar truncate it instead of dropping the whole item
